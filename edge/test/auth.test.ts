@@ -3,7 +3,7 @@ import { requireDashboardToken } from '../src/auth';
 import type { Env } from '../src/env';
 
 const envFixture: Env = {
-  IMG_BUCKET: {} as R2Bucket,
+  IMG_KV: {} as KVNamespace,
   WEBHOOK_DEDUP: {} as KVNamespace,
   GATEWAY_BASE_URL: 'https://gw',
   SIDECAR_BASE_URL: 'https://sc',

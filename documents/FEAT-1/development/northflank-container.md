@@ -546,7 +546,7 @@ spec:
 - `nf-compute-100-2` (1 dedicated vCPU / 2 GB) is the minimum that comfortably runs Chromium. The smaller shared-vCPU SKUs (`nf-compute-20` at 0.2 vCPU / 512 MB or `nf-compute-50` at 0.5 vCPU / 1 GB) **will OOM** when Playwright launches; documented in PRD Risks.
 - Volume size `1 GB` is generous; ACP transcripts compress well. Revisit if it fills.
 - All secrets through Northflank secret manager — never in the image.
-- **Cost impact:** ~$24/mo (this container) + ~$5/mo (Cloudflare Workers Paid plan for SSE — see `cloudflare-webhook.md` Step 6.6) = **~$29/mo total fixed**, ahead of any Gemini API or R2 egress. This is the corrected baseline; the original "$10/mo" target is not achievable with Chromium 24/7.
+- **Cost impact:** ~$24/mo (this container) + ~$5/mo (Cloudflare Workers Paid plan for SSE — see `cloudflare-webhook.md` Step 6.6) = **~$29/mo total fixed**, ahead of any Gemini API usage or KV egress (KV is on free tier; expected to stay there). This is the corrected baseline; the original "$10/mo" target is not achievable with Chromium 24/7.
 
 ### Step 8: Create `.env.example`
 
@@ -585,7 +585,7 @@ GITHUB_TOKEN=YOUR_GITHUB_FINE_GRAINED_PAT_HERE
 # Bearer used by post-screenshot.sh when PUTting images to the Worker /img endpoint.
 CF_UPLOAD_SECRET=YOUR_CF_UPLOAD_SECRET_HERE
 # Public Worker base URL (no trailing slash).
-CF_IMG_BASE_URL=https://openab-line-edge.YOUR_ACCOUNT.workers.dev
+CF_IMG_BASE_URL=https://ai-agent-edge-server.YOUR_ACCOUNT.workers.dev
 
 # --- Dashboard sidecar (bearer the edge Worker sends on /events/stream + /sessions) ---
 DASHBOARD_INGEST_TOKEN=YOUR_DASHBOARD_INGEST_TOKEN_HERE

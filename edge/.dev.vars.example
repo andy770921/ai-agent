@@ -10,7 +10,7 @@ LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyy
 # --- Worker <-> Northflank sidecar (dashboard endpoints) ---
 DASHBOARD_INGEST_TOKEN=YOUR_DASHBOARD_INGEST_TOKEN_HERE
 
-# --- Worker <-> R2 image uploads (container -> Worker PUT /img) ---
+# --- Worker <-> KV image uploads (container -> Worker PUT /img) ---
 CF_UPLOAD_SECRET=YOUR_CF_UPLOAD_SECRET_HERE
 
 # --- Dashboard frontend <-> Worker ---

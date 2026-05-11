@@ -1,20 +1,23 @@
-name = "openab-line-edge"
+name = "ai-agent-edge-server"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
 
-# === R2 bucket for screenshots (24h lifecycle configured in CF dashboard) ===
-[[r2_buckets]]
-binding = "IMG_BUCKET"
-bucket_name = "openab-line-images"
-
 # === KV namespace for LINE webhookEventId dedup (~10 min TTL) ===
-# Create once with: wrangler kv:namespace create WEBHOOK_DEDUP
-# Then paste the returned id into the `id` field below.
 [[kv_namespaces]]
 binding = "WEBHOOK_DEDUP"
-id      = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+id      = "53ea62a12b4d4e34aec32d1ff1962085"
+preview_id = "862f63a79a2c479b98e9213474af97f1"
+
+# === KV namespace for screenshot hosting (24h TTL) ===
+# Replaces what would normally be an R2 bucket. Chosen to avoid R2's
+# credit-card requirement on the Cloudflare account. Each screenshot is a
+# small (~100KB-1MB) image; KV's 25MB per-value limit and 1GB free-tier
+# storage are comfortably more than this use case needs.
+[[kv_namespaces]]
+binding = "IMG_KV"
+id      = "4970d7004f4048828d90aa68356adb5c"
+preview_id = "b65a95d265a1452990013153fda8df19"
 
 [vars]
 # openab-gateway endpoint — receives /webhook/line forwards from this Worker.
@@ -23,7 +26,7 @@ GATEWAY_BASE_URL = "https://openab-line-agent.northflank.app"
 # Northflank exposes a second port at a separate hostname slot; fill in after deploy.
 SIDECAR_BASE_URL = "https://openab-line-agent--8081.northflank.app"
 # Origin that hosts the dashboard frontend (Cloudflare Pages).
-DASHBOARD_ORIGIN = "https://openab-dashboard.pages.dev"
+DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 
 # === Secrets (set via `wrangler secret put <NAME>`) ===
 # LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge

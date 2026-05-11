@@ -32,7 +32,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     }),
   } as unknown as KVNamespace;
   return {
-    IMG_BUCKET: {} as R2Bucket,
+    IMG_KV: {} as KVNamespace,
     WEBHOOK_DEDUP: kvMock,
     GATEWAY_BASE_URL: 'https://gw.test',
     SIDECAR_BASE_URL: 'https://sc.test',

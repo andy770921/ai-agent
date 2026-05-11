@@ -13,7 +13,7 @@ is to host the `/dashboard` views.
 
 ```
 LINE Platform ──▶ Cloudflare Worker (edge/)  ──▶  Northflank container (agent-runtime/)
-                  • LINE webhook + R2 images       • openab-gateway  (LINE protocol)
+                  • LINE webhook + KV-hosted images       • openab-gateway  (LINE protocol)
                   • Dashboard BFF (SSE + REST)     • openab core     (ACP harness)
                                                    • gemini --acp    (per-session)
                                                      ├─ Playwright MCP
@@ -95,21 +95,22 @@ macOS / Linux.
 | `WEBHOOK_DEDUP` `id` + `preview_id` | `edge/wrangler.toml`            | Run `wrangler kv:namespace create WEBHOOK_DEDUP` and the same command with `--preview` once each |
 | `GATEWAY_BASE_URL`                | `edge/wrangler.toml` `[vars]`   | Public URL of the Northflank container's port 8080 (openab-gateway)                              |
 | `SIDECAR_BASE_URL`                | `edge/wrangler.toml` `[vars]`   | Public URL of the Northflank container's port 8081 (Node sidecar)                                |
-| `DASHBOARD_ORIGIN`                | `edge/wrangler.toml` `[vars]`   | The deployed Pages URL, e.g. `https://openab-dashboard.pages.dev`                                |
-| `CF_IMG_BASE_URL`                 | `agent-runtime/.env`            | The Worker URL printed by `wrangler deploy`, e.g. `https://openab-line-edge.<account>.workers.dev` |
+| `DASHBOARD_ORIGIN`                | `edge/wrangler.toml` `[vars]`   | The deployed Pages URL, e.g. `https://ai-agent-dashboard.pages.dev`                                |
+| `CF_IMG_BASE_URL`                 | `agent-runtime/.env`            | The Worker URL printed by `wrangler deploy`, e.g. `https://ai-agent-edge-server.<account>.workers.dev` |
 | `NEXT_PUBLIC_WORKER_URL`          | `frontend/.env.local`           | Same as `CF_IMG_BASE_URL`                                                                         |
 
 ### Cloudflare resources to create up-front (not tokens but prerequisites)
 
-- **R2 bucket** `openab-line-images` — create with `wrangler r2 bucket create openab-line-images`.
-- **Cloudflare Pages project** `openab-dashboard` — auto-created on the first `npm run pages-deploy --workspace=frontend`.
+- **KV namespace** `IMG_KV` for screenshot hosting (24h TTL) — created with `wrangler kv:namespace create IMG_KV`. We use KV instead of R2 to keep the deploy credit-card-free; see `documents/FEAT-1/development/cloudflare-webhook.md` for the trade-offs.
+- **KV namespace** `WEBHOOK_DEDUP` for LINE webhook dedup — created with `wrangler kv:namespace create WEBHOOK_DEDUP`.
+- **Cloudflare Pages project** `ai-agent-dashboard` — auto-created on the first `npm run pages-deploy --workspace=frontend`.
 
 ## Deploying
 
 The deploy sequence and live verification steps live in
 `documents/FEAT-1/development/phase0-e2e-spike-runbook.md`. At a glance:
 
-1. **Cloudflare**: create R2 bucket + KV namespace; `wrangler secret put` for
+1. **Cloudflare**: create KV namespaces (`WEBHOOK_DEDUP` + `IMG_KV`); `wrangler secret put` for
    each Worker secret; `wrangler deploy` from `edge/`.
 2. **Northflank**: configure the secrets listed in
    `agent-runtime/.northflank/service.yaml`; trigger a Docker build of

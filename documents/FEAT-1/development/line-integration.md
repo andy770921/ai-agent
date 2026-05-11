@@ -70,8 +70,8 @@ Already covered in `cloudflare-webhook.md`, but for completeness:
 
 Once the Cloudflare Worker is deployed (`wrangler deploy`):
 
-1. Copy its public URL, e.g., `https://openab-line-edge.<account>.workers.dev`.
-2. In LINE Console → **Messaging API settings** → **Webhook URL**: paste `https://openab-line-edge.<account>.workers.dev/line/webhook`.
+1. Copy its public URL, e.g., `https://ai-agent-edge-server.<account>.workers.dev`.
+2. In LINE Console → **Messaging API settings** → **Webhook URL**: paste `https://ai-agent-edge-server.<account>.workers.dev/line/webhook`.
 3. Click **Verify**. LINE sends a test event; expect `Success`.
 4. Toggle **Use webhook** = ON if not already.
 
@@ -104,7 +104,7 @@ This is the **only** code path in FEAT-1 that talks to `api.line.me` directly ou
 **Concrete flow (v1):**
 
 1. The agent (Gemini) calls Playwright MCP and saves a PNG to `/tmp/x.png`.
-2. The agent runs `/usr/local/bin/post-screenshot.sh /tmp/x.png` → R2 upload via the Worker → prints `https://<worker>.workers.dev/img/<uuid>.png`.
+2. The agent runs `/usr/local/bin/post-screenshot.sh /tmp/x.png` → KV upload via the Worker → prints `https://<worker>.workers.dev/img/<uuid>.png`.
 3. The agent reads `sender_context.sender_id` from the incoming prompt (OpenAB injects this block; see `openab-upstream-findings.md` §6).
 4. The agent runs `/usr/local/bin/send-line-image.sh <sender_id> <url-from-step-2>`. The script POSTs the LINE Push API.
 5. The agent's text reply (a brief confirmation) flows through OpenAB → gateway → LINE Reply or Push (via the hybrid logic in Step 5).
@@ -116,8 +116,8 @@ The exact `image` message payload sent to LINE by `send-line-image.sh`:
   "to": "<userId>",
   "messages": [{
     "type": "image",
-    "originalContentUrl": "https://openab-line-edge.<account>.workers.dev/img/<uuid>.png",
-    "previewImageUrl":   "https://openab-line-edge.<account>.workers.dev/img/<uuid>.png"
+    "originalContentUrl": "https://ai-agent-edge-server.<account>.workers.dev/img/<uuid>.png",
+    "previewImageUrl":   "https://ai-agent-edge-server.<account>.workers.dev/img/<uuid>.png"
   }]
 }
 ```

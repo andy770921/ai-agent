@@ -6,7 +6,7 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "build:pages": "BUILD_TARGET=pages next build",
-    "pages-deploy": "BUILD_TARGET=pages next build && wrangler pages deploy out --project-name=openab-dashboard --branch=main",
+    "pages-deploy": "BUILD_TARGET=pages next build && wrangler pages deploy out --project-name=ai-agent-dashboard --branch=main",
     "start": "next start -p 3001",
     "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
     "test": "jest",

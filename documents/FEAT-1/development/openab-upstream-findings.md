@@ -134,7 +134,7 @@ The same applies to LINE. Two paths for FEAT-1:
 
 **Path A (chosen for v1):** Agent calls LINE Push API directly.
 - Add `LINE_CHANNEL_ACCESS_TOKEN` to `[agent].env` (security tradeoff acknowledged).
-- `post-screenshot.sh` keeps its existing shape (uploads to R2, prints URL).
+- `post-screenshot.sh` keeps its existing shape (uploads to the KV image store, prints URL).
 - A second shell helper, `agent-runtime/scripts/send-line-image.sh`, takes `<userId> <url>` and POSTs:
   ```
   POST https://api.line.me/v2/bot/message/push

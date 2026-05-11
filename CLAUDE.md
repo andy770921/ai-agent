@@ -11,7 +11,7 @@ components plus a Docker container:
 ```
 ├── frontend/        # Next.js 15 — dashboard (Cloudflare Pages, static export)
 ├── shared/          # @repo/shared — AgentEvent / SessionSummary / health types
-├── edge/            # Cloudflare Worker — webhook + R2 images + dashboard BFF
+├── edge/            # Cloudflare Worker — webhook + KV-hosted images + dashboard BFF
 ├── agent-runtime/   # Docker container for Northflank (NOT an npm workspace)
 ├── documents/       # Per-ticket plans (PRDs + implementation docs)
 ├── .claude/         # Custom slash commands
@@ -65,7 +65,7 @@ npm run build:pages --workspace=frontend
 5. The agent's text reply travels back the same path; the gateway uses LINE
    Reply API while the `replyToken` is fresh and falls back to Push API.
 6. Image replies bypass the gateway: the agent runs `post-screenshot.sh`
-   (uploads to R2 via the Worker) and `send-line-image.sh` (POSTs LINE Push
+   (uploads to the KV image store via the Worker) and `send-line-image.sh` (POSTs LINE Push
    API directly using the `LINE_CHANNEL_ACCESS_TOKEN` exposed via
    `openab.toml` `[agent].env`).
 
@@ -154,10 +154,13 @@ the ticket ID (e.g. `FEAT-1`).
 
 ## Deployment
 
-- **Cloudflare Worker**: `cd edge && wrangler deploy` (after secrets + KV +
-  R2 set up — see `documents/FEAT-1/development/phase0-e2e-spike-runbook.md` §1).
+- **Cloudflare Worker**: `cd edge && wrangler deploy` (after the two KV
+  namespaces `WEBHOOK_DEDUP` and `IMG_KV` are created and their IDs are pasted
+  into `edge/wrangler.toml`, plus the five Worker secrets are set via
+  `wrangler secret put` — see
+  `documents/FEAT-1/development/phase0-e2e-spike-runbook.md` §1).
 - **Dashboard**: `npm run pages-deploy --workspace=frontend` (deploys
-  `frontend/out/` to Cloudflare Pages project `openab-dashboard`).
+  `frontend/out/` to Cloudflare Pages project `ai-agent-dashboard`).
 - **Container**: build `agent-runtime/Dockerfile` and push to Northflank
   per `agent-runtime/.northflank/service.yaml`.
 

@@ -5,7 +5,7 @@
 A single **Cloudflare Worker** that does **three** jobs (consolidated from the original "Worker + NestJS BFF" split — see PRD topology revision):
 
 1. **`POST /line/webhook`** — receives LINE webhooks, verifies LINE's `X-Line-Signature` HMAC (a **fast-fail pre-check** at the edge; `openab-gateway` is the authoritative re-verifier — see `openab-upstream-findings.md` §3), drops events from non-allowlisted LINE userIds, dedupes via KV on `webhookEventId`, then forwards the verified payload to the gateway's `/webhook/line`.
-2. **`PUT /img/:id` & `GET /img/:id`** — accepts authenticated PUT uploads from the Northflank container into a Cloudflare R2 bucket, then serves them publicly so LINE's CDN can fetch screenshots.
+2. **`PUT /img/:id` & `GET /img/:id`** — accepts authenticated PUT uploads from the Northflank container into a Cloudflare **KV namespace** (`IMG_KV`, with `expirationTtl: 86400`), then serves them publicly so LINE's CDN can fetch screenshots. (We use KV instead of R2 because R2 requires a credit card and KV's free tier comfortably fits ≤5-user screenshot traffic — see "Why KV instead of R2" in Notes.)
 3. **Dashboard BFF (v1.5):** `GET /api/sessions/stream` (SSE proxy from the agent-runtime sidecar on Northflank `:8081`), `GET /api/sessions`, `GET /api/sessions/:userId/history` — all auth-gated by a single `DASHBOARD_TOKEN` that the dashboard frontend supplies.
 
 Why one Worker (not Worker + NestJS BFF):
@@ -27,8 +27,8 @@ edge/
 ├── src/
 │   ├── index.ts                  # Worker entry: routes + bindings
 │   ├── lineWebhook.ts            # LINE signature verification + forward
-│   ├── imageUpload.ts            # PUT /img/:id (auth + R2 put)
-│   ├── imageServe.ts             # GET /img/:id (R2 get + cache)
+│   ├── imageUpload.ts            # PUT /img/:id (auth + KV put with 24h TTL)
+│   ├── imageServe.ts             # GET /img/:id (KV get + cache headers)
 │   ├── allowlist.ts              # parse + check LINE userId allowlist
 │   ├── cors.ts                   # CORS headers for dashboard cross-origin requests
 │   ├── dashboardSse.ts           # NEW v1.5 — SSE proxy: /api/sessions/stream
@@ -52,17 +52,10 @@ The root `package.json` adds `edge` to its `workspaces` array. `turbo.json` gain
 **Changes:**
 
 ```toml
-name = "openab-line-edge"
+name = "ai-agent-edge-server"
 main = "src/index.ts"
 compatibility_date = "2025-09-01"
 compatibility_flags = ["nodejs_compat"]
-
-[[r2_buckets]]
-binding = "IMG_BUCKET"
-bucket_name = "openab-line-images"
-
-# Lifecycle rule for IMG_BUCKET: delete objects after 1 day.
-# (Configured in CF dashboard; documented here for reference.)
 
 # Webhook event de-duplication store. Holds <webhookEventId, status> for ~10 min
 # so retries / redeliveries from LINE don't replay GitHub or browser actions.
@@ -73,6 +66,17 @@ bucket_name = "openab-line-images"
 [[kv_namespaces]]
 binding = "WEBHOOK_DEDUP"
 id      = "<fill via wrangler kv:namespace create WEBHOOK_DEDUP>"
+preview_id = "<fill via wrangler kv:namespace create WEBHOOK_DEDUP --preview>"
+
+# Screenshot host. Replaces what would normally be an R2 bucket; we use KV to
+# avoid R2's credit-card requirement on the Cloudflare account. KV's free tier
+# is 1 GB total storage with 25 MB per value, which is comfortably above any
+# Playwright PNG. Each upload is written with `expirationTtl: 86400` so the
+# 24h lifecycle is enforced by KV itself, no dashboard rule needed.
+[[kv_namespaces]]
+binding = "IMG_KV"
+id      = "<fill via wrangler kv:namespace create IMG_KV>"
+preview_id = "<fill via wrangler kv:namespace create IMG_KV --preview>"
 
 [vars]
 # Gateway base URL — the openab-gateway listens on :8080 of the Northflank service.
@@ -81,7 +85,7 @@ GATEWAY_BASE_URL       = "https://<container>.northflank.app"
 # Dashboard sidecar lives on :8081; Northflank exposes it on the same hostname
 # but a different port (configured in service.yaml).
 SIDECAR_BASE_URL       = "https://<container>--8081.northflank.app"
-DASHBOARD_ORIGIN       = "https://openab-dashboard.pages.dev"
+DASHBOARD_ORIGIN       = "https://ai-agent-dashboard.pages.dev"
 
 # Secrets (set via `wrangler secret put`):
 #   LINE_CHANNEL_SECRET    — for the Worker's HMAC pre-check (the gateway re-verifies)
@@ -95,7 +99,7 @@ DASHBOARD_ORIGIN       = "https://openab-dashboard.pages.dev"
 
 **Rationale:**
 - **Two base URLs** because the gateway and sidecar live on different ports of the same Northflank service. Northflank exposes each port at a unique hostname slot (`<container>--<port>.northflank.app`); the Worker dials each one for its respective concerns.
-- R2 binding is the cheapest way to host images; no S3 SDK, no signed URLs, no egress fees inside Cloudflare.
+- **Two KV namespaces, no R2.** `WEBHOOK_DEDUP` is the dedup ring; `IMG_KV` is the image host. Both live on Cloudflare's free tier (no credit card). See "Why KV instead of R2" below.
 
 ### Step 2: Worker entry — route fan-out
 
@@ -113,7 +117,7 @@ import { requireDashboardToken } from './auth';
 import { corsHeaders, handlePreflight } from './cors';
 
 export interface Env {
-  IMG_BUCKET: R2Bucket;
+  IMG_KV: KVNamespace;        // screenshot host, 24h TTL (see Step 5)
   WEBHOOK_DEDUP: KVNamespace; // LINE webhookEventId dedup, ~10 min TTL
   GATEWAY_BASE_URL: string;
   SIDECAR_BASE_URL: string;
@@ -122,7 +126,7 @@ export interface Env {
   LINE_CHANNEL_SECRET: string;
   LINE_ALLOWED_USER_IDS: string;
   CF_UPLOAD_SECRET: string;
-  DASHBOARD_ORIGIN: string; // e.g. "https://openab-dashboard.pages.dev"
+  DASHBOARD_ORIGIN: string; // e.g. "https://ai-agent-dashboard.pages.dev"
 }
 
 export default {
@@ -180,7 +184,7 @@ export default {
 
 **File:** `src/cors.ts`
 
-> **Why this is required (not optional):** The dashboard on Cloudflare Pages (e.g. `openab-dashboard.pages.dev`) makes cross-origin requests to the Worker (`openab-line-edge.workers.dev`). Browsers block cross-origin `fetch` unless the server returns proper CORS headers. This applies to both REST calls and the SSE stream (which uses `fetch`, not `EventSource`, because we need the `Authorization` header).
+> **Why this is required (not optional):** The dashboard on Cloudflare Pages (e.g. `ai-agent-dashboard.pages.dev`) makes cross-origin requests to the Worker (`ai-agent-edge-server.workers.dev`). Browsers block cross-origin `fetch` unless the server returns proper CORS headers. This applies to both REST calls and the SSE stream (which uses `fetch`, not `EventSource`, because we need the `Authorization` header).
 
 **Changes:**
 
@@ -400,14 +404,19 @@ export function isAllowedUser(
 
 **Rationale:** Trivial, pure, easy to unit-test. CSV in env keeps the secret store flat.
 
-### Step 5: Image upload (container → Worker → R2)
+### Step 5: Image upload (container → Worker → KV)
 
 **File:** `src/imageUpload.ts`
+
+> **Backing store: KV, not R2** (see "Why KV instead of R2" below). Each upload is buffered into an `ArrayBuffer` and written to `IMG_KV` with `expirationTtl: 86400`, so the 24h lifecycle is enforced by KV automatically — no separate dashboard rule needed.
 
 **Changes:**
 
 ```ts
 import type { Env } from './index';
+
+const KEY_RE = /^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/;
+const TTL_SECONDS = 86400; // 24h
 
 export async function handleImageUpload(
   req: Request,
@@ -418,7 +427,7 @@ export async function handleImageUpload(
   if (auth !== `Bearer ${env.CF_UPLOAD_SECRET}`) {
     return new Response('unauthorized', { status: 401 });
   }
-  if (!/^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/.test(key)) {
+  if (!KEY_RE.test(key)) {
     return new Response('bad key', { status: 400 });
   }
   const contentType = req.headers.get('content-type') ?? 'application/octet-stream';
@@ -426,13 +435,17 @@ export async function handleImageUpload(
     return new Response('bad content-type', { status: 400 });
   }
 
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const objKey = `images/${today}/${key}`;
+  if (!req.body) return new Response('no body', { status: 400 });
+  // KV.put requires a concrete value, not a stream. A screenshot is ~100KB-1MB;
+  // far under the 25MB per-value KV cap.
+  const bytes = await req.arrayBuffer();
 
-  await env.IMG_BUCKET.put(objKey, req.body, {
-    httpMetadata: { contentType },
+  await env.IMG_KV.put(key, bytes, {
+    expirationTtl: TTL_SECONDS,
+    metadata: { contentType },
   });
-  return new Response(JSON.stringify({ key: objKey }), {
+
+  return new Response(JSON.stringify({ key }), {
     status: 201,
     headers: { 'content-type': 'application/json' },
   });
@@ -441,8 +454,9 @@ export async function handleImageUpload(
 
 **Rationale:**
 - Bearer-token auth is enough for a server-to-server PUT inside a small system. The token is shared between Worker and Northflank container via secret managers; rotation is a `wrangler secret put` away.
-- Date-prefixed keys make R2 lifecycle rules trivial (delete `images/<old-date>/*`).
+- `expirationTtl` is KV-native — KV evicts the key automatically at 24h, no date-prefix bookkeeping needed.
 - Strict key regex prevents path traversal (`../../etc/passwd` style).
+- `metadata.contentType` is stored alongside the bytes so the GET handler can return the correct `content-type` header without sniffing.
 
 ### Step 6: Image serve
 
@@ -453,31 +467,35 @@ export async function handleImageUpload(
 ```ts
 import type { Env } from './index';
 
+interface ImageMeta {
+  contentType?: string;
+}
+
 export async function handleImageServe(
-  req: Request,
+  _req: Request,
   env: Env,
   key: string,
 ): Promise<Response> {
-  // Look up across the last 2 days (covers the lifecycle TTL).
-  for (const offset of [0, 1]) {
-    const d = new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
-    const obj = await env.IMG_BUCKET.get(`images/${d}/${key}`);
-    if (obj) {
-      return new Response(obj.body, {
-        headers: {
-          'content-type': obj.httpMetadata?.contentType ?? 'image/png',
-          'cache-control': 'public, max-age=86400',
-        },
-      });
-    }
+  const { value, metadata } = await env.IMG_KV.getWithMetadata<ImageMeta>(
+    key,
+    'arrayBuffer',
+  );
+  if (!value) {
+    return new Response('not found', { status: 404 });
   }
-  return new Response('not found', { status: 404 });
+  return new Response(value, {
+    headers: {
+      'content-type': metadata?.contentType ?? 'image/png',
+      'cache-control': 'public, max-age=86400',
+    },
+  });
 }
 ```
 
 **Rationale:**
-- Two-day lookup avoids needing a separate index of "where is `<uuid>.png`?".
-- `cache-control: max-age=86400` tells LINE's CDN it can cache for a day — the same as the lifecycle window. After 24h, both LINE and R2 forget about the image, which is the desired behavior for ephemeral screenshots.
+- One KV read per request — no two-day fallback loop, because KV's `expirationTtl` makes "found vs. expired" unambiguous.
+- `cache-control: max-age=86400` tells LINE's CDN it can cache for a day — the same as KV's TTL. After 24h, both LINE and KV forget about the image, which is the desired behavior for ephemeral screenshots.
+- `getWithMetadata<ImageMeta>(..., 'arrayBuffer')` returns the bytes and the JSON metadata in one round-trip.
 
 ### Step 6.5: Auth helper
 
@@ -604,7 +622,7 @@ LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyy
 # --- Worker <-> Northflank sidecar (dashboard endpoints) ---
 DASHBOARD_INGEST_TOKEN=YOUR_DASHBOARD_INGEST_TOKEN_HERE
 
-# --- Worker <-> R2 image uploads (container -> Worker PUT) ---
+# --- Worker <-> KV image uploads (container -> Worker PUT /img) ---
 CF_UPLOAD_SECRET=YOUR_CF_UPLOAD_SECRET_HERE
 
 # --- Dashboard frontend <-> Worker ---
@@ -670,7 +688,7 @@ describe('isAllowedUser', () => {
 2. **Bad signature:** post with garbage `X-Line-Signature` → expect `401`.
 3. **Allowlist drop:** post a valid event from a userId not in the allowlist → expect `200` and **no** forward.
 4. **Image round-trip:** `curl -X PUT -H "Authorization: Bearer $CF_UPLOAD_SECRET" --data-binary @test.png .../img/abc.png` → expect `201`. Then `curl .../img/abc.png` → expect the bytes back.
-5. **Lifecycle:** manually verify the R2 bucket lifecycle rule is set to "delete objects after 1 day" via the Cloudflare dashboard.
+5. **Lifecycle:** confirm via `wrangler kv:key list --binding=IMG_KV` (or the dashboard) that uploaded keys show a 24h expiration. KV's `expirationTtl` enforces this server-side; no dashboard rule needed.
 6. **Dashboard auth:** `curl https://<edge>/api/sessions` without `Authorization` → expect `401`. With correct bearer → expect `[]` or a JSON list.
 7. **Dashboard SSE smoke:** `curl -N -H "Authorization: Bearer $DASHBOARD_TOKEN" https://<edge>/api/sessions/stream` while a LINE message is in flight → expect SSE events to arrive within ~1s of the agent acting.
 8. **Production smoke:** after `wrangler deploy`, set the LINE webhook URL to the Worker's public URL, send `ping` from LINE, confirm Northflank logs show the forwarded event AND the dashboard shows the live event in `/api/sessions/stream`.
@@ -684,7 +702,12 @@ describe('isAllowedUser', () => {
 
 - **Why not Cloudflare Tunnel for the LINE webhook?** Tunnel doesn't give us signature verification at the edge; we'd still need to run that logic inside Northflank, where every spam request consumes container CPU. Worker is strictly cheaper.
 - **Why not a separate Worker per route?** Same code, same secrets, two deployments to manage. Not worth it.
-- **R2 vs. KV vs. inline base64:** LINE strictly requires public HTTPS URLs for image messages — base64 is not supported. R2 is the cheapest persistent store with public-read; KV has size limits unfriendly to images.
+- **Why KV instead of R2:** LINE strictly requires public HTTPS URLs for image messages — base64 / data: URIs are not supported, so the image has to live at *some* Cloudflare-hosted URL. R2 is the canonical choice for blob hosting, but enabling R2 in a Cloudflare account currently requires accepting paid-tier terms with a credit card on file even when you only intend to stay inside the free 10 GB allowance. To keep the FEAT-1 deploy credit-card-free we use **Workers KV** for the same role:
+  - Free tier: 1 GB storage / 100k reads/day / 1k writes/day. For ≤5 invited users with sparse screenshot traffic this is comfortably above the worst case.
+  - Per-value limit: 25 MB — far above any Playwright PNG (typical 100 KB–1 MB).
+  - TTL is native (`expirationTtl: 86400`); no dashboard rule needed.
+  - Read latency is ~50 ms vs R2's ~10 ms; invisible to LINE's CDN-side fetch.
+  - **Limitation:** KV writes are eventually consistent across edges (~60 s). For a screenshot that the agent just uploaded and the LINE CDN fetches seconds later this is in the worst case a one-time retry by LINE; we have not observed it in testing but if it ever becomes a real problem, the migration path is: enable R2, swap `IMG_KV` binding for an `IMG_BUCKET` R2 binding, and replace `getWithMetadata`/`put` calls. The image-handler code is ~30 LOC; the migration is two diffs.
 - **Custom domain:** `*.workers.dev` is fine for v1. If LINE's verification ever rejects a `workers.dev` URL (it won't, but if), point a custom domain at the Worker.
 - **Cost check:** with ≤5 users sending ≤100 messages/day each (generous), we're at ≤500 webhook req/day + ≤500 image GETs/day = under 0.1% of free-tier request limits. However, the SSE proxy route requires the Workers **Paid plan ($5/mo)** due to the 10ms CPU time limit on the free tier — long-lived streaming responses will exceed it.
 - **CORS is required, not optional.** The dashboard (Cloudflare Pages) and the Worker are on different origins. Without CORS headers on `/api/*` responses + an `OPTIONS` preflight handler, every browser request from the dashboard will fail. See Step 2.5 above.

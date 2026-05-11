@@ -92,7 +92,7 @@ module.exports = nextConfig;
 {
   "scripts": {
     "build": "next build",
-    "pages-deploy": "next build && wrangler pages deploy out --project-name=openab-dashboard --branch=main"
+    "pages-deploy": "next build && wrangler pages deploy out --project-name=ai-agent-dashboard --branch=main"
   },
   "devDependencies": {
     "wrangler": "^3.78.0"
@@ -345,14 +345,14 @@ Each row links the LINE userId to `/dashboard/sessions/[userId]`.
 
 **Steps (one-time, in Cloudflare dashboard):**
 
-1. Create a Pages project named `openab-dashboard`.
+1. Create a Pages project named `ai-agent-dashboard`.
 2. Connect the Git repo (or use direct upload via `wrangler pages deploy`).
 3. Build settings (only used if Git-integrated):
    - **Build command:** `npm install && npm run build --workspace=frontend`
    - **Build output:** `frontend/out`
    - **Root directory:** repository root
 4. Environment variables:
-   - `NEXT_PUBLIC_WORKER_URL` = `https://openab-line-edge.<account>.workers.dev` (or the custom domain).
+   - `NEXT_PUBLIC_WORKER_URL` = `https://ai-agent-edge-server.<account>.workers.dev` (or the custom domain).
 
 **Note:** static export means the only "env" baked in is `NEXT_PUBLIC_WORKER_URL`. The dashboard token is **never** baked into the build — users paste it at runtime.
 

@@ -2,7 +2,7 @@
 
 > **Status note:** The previous `FEAT-1` ("init-fullstack-project") was retired before this work began (see `git status` showing those files deleted). This PRD reuses `FEAT-1` for the new initiative.
 
-> **Naming clarification:** "Cloudinary" in the original brief is read as a typo for **Cloudflare**. All image hosting in this PRD is on **Cloudflare R2** via the same Cloudflare Worker that proxies LINE webhooks. If Cloudinary (the image SaaS) was actually intended, surface that and we'll swap R2 → Cloudinary in the `edge/` and `gemini-cli-tools` plans.
+> **Naming clarification:** "Cloudinary" in the original brief is read as a typo for **Cloudflare**. All image hosting in this PRD is on Cloudflare via the same Cloudflare Worker that proxies LINE webhooks. The original plan targeted Cloudflare R2; during the live deploy we switched to **Cloudflare Workers KV** because R2 requires a credit card on file. KV's free tier (1 GB storage, 25 MB per value, 24h `expirationTtl` native) comfortably fits ≤5-user screenshot traffic. See `documents/FEAT-1/development/cloudflare-webhook.md` → "Why KV instead of R2" for the trade-off and the migration path back to R2 if usage outgrows KV.
 
 ## Problem Statement
 
@@ -44,12 +44,12 @@ LINE app  ─►  LINE Platform ──►  │  agent-runtime container (3 proce
    │   │            Cloudflare (free tier — single account)                 │
    └───┤  edge/ — ONE Worker doing everything edge-side:                    │
        │    • POST /line/webhook                  (LINE → gateway :8080)    │
-       │    • PUT  /img/:id  (auth)               (container → R2)          │
-       │    • GET  /img/:id                       (R2 → LINE CDN)           │
+       │    • PUT  /img/:id  (auth)               (container → IMG_KV)     │
+       │    • GET  /img/:id                       (IMG_KV → LINE CDN)      │
        │    • GET  /api/sessions/stream  (SSE)    ◄── proxies sidecar :8081 │
        │    • GET  /api/sessions                  ◄── proxies sidecar :8081 │
        │    • GET  /api/sessions/:userId/history  ◄── proxies sidecar :8081 │
-       │  + R2 bucket: 24h TTL screenshots                                  │
+       │  + KV namespace IMG_KV: 24h TTL screenshots (native expirationTtl) │
        │  + KV namespace: webhookEventId dedup, 10 min TTL                  │
        │                                                                    │
        │  frontend/ — Cloudflare Pages (static export)                      │
@@ -67,7 +67,7 @@ LINE app  ─►  LINE Platform ──►  │  agent-runtime container (3 proce
 - **OpenAB** does all the hard work of multiplexing chat → ACP coding-agent CLI. We avoid writing our own bot.
 - **Gemini CLI** (Google's official ACP-compatible CLI) plugs into OpenAB and natively supports MCP servers, which is how Playwright and GitHub access are added.
 - **Single Northflank container** keeps cost as low as Chromium 24/7 allows. The previous draft cited `nf-compute-20` as "1 vCPU / 2 GB ~$13/mo" — that was wrong (per `plans/review.md` finding #4): Northflank's `nf-compute-20` is 0.2 shared vCPU / 512 MB / ~$5.40/mo, which will OOM the instant Chromium launches. The smallest SKU that meets the memory budget is `nf-compute-100-2` (1 dedicated vCPU / 2 GB) at ~$24/mo. Original <$10/mo target is therefore not achievable with Chromium 24/7. Revised cost estimate: **~$29/mo** ($24 Northflank + $5 Cloudflare Workers Paid plan for SSE). Splitting Playwright into a sidecar would double container cost.
-- **Single Cloudflare Worker** absorbs LINE webhook proxying, R2 image hosting, AND the dashboard BFF (SSE proxy + REST proxies). One TypeScript codebase, one deploy, one bearer-token auth model. The boilerplate's existing `backend/` (NestJS / Vercel) is **not used** for FEAT-1; it stays in the repo for future features.
+- **Single Cloudflare Worker** absorbs LINE webhook proxying, KV-backed image hosting (`IMG_KV` namespace), AND the dashboard BFF (SSE proxy + REST proxies). One TypeScript codebase, one deploy, one bearer-token auth model. The boilerplate's existing `backend/` (NestJS / Vercel) is **not used** for FEAT-1; it stays in the repo for future features.
 - **Cloudflare Pages** hosts the Next.js dashboard as a **static export** (`output: 'export'`). The dashboard is client-driven (EventSource + auth'd `fetch`), so it does not need SSR or serverless functions; static-on-Pages is the cheapest, fastest path. Single Cloudflare account = single billing/observability for everything that's not Northflank.
 
 ## Repository Topology
@@ -101,7 +101,7 @@ claude-code-fullstack-boilerplate/
 │   │   └── send-line-image.sh
 │   └── .northflank/service.yaml
 ├── edge/                 # NEW — ONE Cloudflare Worker:
-│   │                     #   • LINE webhook + R2 images (v1)
+│   │                     #   • LINE webhook + KV-hosted images (v1)
 │   │                     #   • dashboard BFF: SSE proxy + REST (v1.5)
 │   ├── wrangler.toml
 │   ├── src/
@@ -153,7 +153,7 @@ claude-code-fullstack-boilerplate/
 | 1 | **agent-runtime container** | `agent-runtime/` | The single Docker image running `openab-gateway` + `openab` core + Gemini CLI + Chromium + Playwright MCP + Node sidecar. Two HTTP-listening processes (`:8080` gateway, `:8081` sidecar) plus the agent subtree. Sources dashboard events from `$GEMINI_TELEMETRY_OUTFILE`. | In: HTTPS POST from CF Worker (gateway side); HTTPS from CF Worker (sidecar dashboard endpoints). Out: LINE Messaging API; outbound HTTPS to Gemini, GitHub, target browser pages. | v1 + v1.5 |
 | 2 | **OpenAB Config** | `agent-runtime/config/` | TOML config wiring LINE Custom Gateway to Gemini agent. | In: env vars. Out: spawns Gemini CLI processes. | v1 |
 | 3 | **Gemini CLI Tools** | `agent-runtime/gemini/` | MCP-server wiring: Playwright + GitHub. | In: `settings.json`, `GITHUB_TOKEN`, `GEMINI_API_KEY`. Out: tool calls. | v1 |
-| 4 | **Cloudflare Edge Worker** | `edge/` | (v1) LINE webhook signature verify + allowlist + forward; image upload (auth) + serve (public). (v1.5) Dashboard BFF: SSE proxy + REST proxies, all auth-gated. | In: LINE webhook, container PUT, dashboard fetch. Out: HTTPS to Northflank, R2 reads/writes, SSE to frontend. | v1 + v1.5 |
+| 4 | **Cloudflare Edge Worker** | `edge/` | (v1) LINE webhook signature verify + allowlist + forward; image upload (auth) + serve (public). (v1.5) Dashboard BFF: SSE proxy + REST proxies, all auth-gated. | In: LINE webhook, container PUT, dashboard fetch. Out: HTTPS to Northflank, KV reads/writes (`IMG_KV` for images, `WEBHOOK_DEDUP` for idempotency), SSE to frontend. | v1 + v1.5 |
 | 5 | **LINE Channel Setup** | (LINE Console) | LINE Messaging API channel: webhook URL config, channel secret/token, allowlist. | In: messages. Out: API calls from container. | v1 |
 | 6 | **Shared Types** | `shared/src/types/` | `AgentEvent`, `SessionSummary`, `McpToolCall` — the contract between agent-runtime, edge Worker, and frontend. | Type-only. | v1.5 |
 | 7 | **Dashboard UI** | `frontend/` | Next.js (static-export) page at `/dashboard` showing live event feed + per-session timeline. Deployed on **Cloudflare Pages**. | In: SSE + REST from edge Worker. Out: human eyeballs. | v1.5 |
@@ -166,7 +166,7 @@ claude-code-fullstack-boilerplate/
 - **Gemini CLI as the ACP backend** (not Claude Code, Codex, etc.) because the user explicitly chose Gemini and because Google AI Studio's free tier is sufficient for ≤5 personal users.
 - **Persistent storage = Northflank volume mount** at `/var/lib/openab/sessions`. v2 will migrate this to Supabase or a Hermes-Agent-backed store.
 - **Cloudflare Worker as the public edge.** Northflank's container public URL is reachable but unprotected; putting a Worker in front gives us free signature-verification and allowlist enforcement without adding a paid WAF.
-- **Image replies via Cloudflare R2 + Worker route.** LINE's `image` message type requires `originalContentUrl` and `previewImageUrl` to be public HTTPS URLs.
+- **Image replies via Cloudflare KV + Worker route.** LINE's `image` message type requires `originalContentUrl` and `previewImageUrl` to be public HTTPS URLs (base64 / data: URIs are rejected by LINE), so the screenshot must live at some Cloudflare-hosted URL. We host the bytes in the `IMG_KV` namespace with `expirationTtl: 86400`. R2 would have been the canonical choice but was skipped to keep the deploy credit-card-free; see `cloudflare-webhook.md` for the migration path back to R2.
 - **GitHub auth = fine-grained PAT** stored in Northflank secret. Read-only on all repos owned by the user + `pull_requests:write` on a selected list.
 - **No multi-region.** Single Northflank region, single Worker. Latency from LINE Tokyo → CF edge → Northflank acceptable for chat.
 
@@ -303,7 +303,7 @@ Sessions are keyed by **LINE `userId`** (a stable per-channel identifier from LI
 | `replyToken` expires while agent is "thinking" | High | Medium | Switch to `pushMessage` after ~25s. |
 | GitHub PAT leak from container env | Low | High | Northflank secret-mount only; never log env; PAT is fine-grained. |
 | Playwright misuse → site IP-block | Low | Medium | Polite UA, no concurrent browsers, `max_sessions=1` for browser MCP. |
-| Northflank volume loss during plan migration | Low | Medium | Periodic dump of session state to R2. v2 Supabase migration removes this. |
+| Northflank volume loss during plan migration | Low | Medium | Periodic dump of session state to Cloudflare KV / R2 (whichever is enabled). v2 Supabase migration removes this. |
 | ~~**(v1.5) OpenAB doesn't expose structured event stream out of the box**~~ — **RESOLVED** in Phase 0.2 | — | — | Use `$GEMINI_TELEMETRY_OUTFILE` (documented in `bundle/docs/cli/acp-mode.md`) — Gemini CLI writes JSON-line events directly when `GEMINI_TELEMETRY_ENABLED=true GEMINI_TELEMETRY_TARGET=local`. `events-emitter.js` tails this file. See `openab-upstream-findings.md` §10.5. |
 | **(v1.5) Dashboard exposes sensitive PR contents/screenshots if token leaks** | Low | High | Single-user use; rotate token on suspicion; do NOT include the bearer token in URLs (use `Authorization` header only). Two-token model (`DASHBOARD_TOKEN` ≠ `DASHBOARD_INGEST_TOKEN`) limits blast radius. |
 | **(v1.5) Cloudflare Pages static export incompatible with some Next.js features** (e.g., `getServerSideProps`, image optimization, server actions) | Medium | Low | Dashboard is intentionally client-side only — design pages around `'use client'` + `fetch`/`EventSource`. Disable next/image optimization or use `unoptimized: true`. |
@@ -325,7 +325,7 @@ Sessions are keyed by **LINE `userId`** (a stable per-channel identifier from LI
 - **v2 — More tools:** Confluence MCP, Slack MCP, file MCP for personal notes.
 - **v2 — Dashboard write actions:** kill a session, send a manual LINE reply, edit allowlist from UI.
 - **v2 — Dashboard SSO:** GitHub OAuth, replacing the bearer token.
-- **v2 — Dashboard cost panel:** Gemini token usage per session, R2 storage usage.
+- **v2 — Dashboard cost panel:** Gemini token usage per session, KV/R2 storage usage.
 
 ## Status
 
@@ -382,7 +382,7 @@ cd agent-runtime && docker build -t openab-line-agent . && docker push <registry
 cd edge && wrangler deploy
 
 # 3. Deploy dashboard to Cloudflare Pages
-cd frontend && npm run build && wrangler pages deploy out --project-name=openab-dashboard
+cd frontend && npm run build && wrangler pages deploy out --project-name=ai-agent-dashboard
 
 # 4. Verify
 curl https://<container>.northflank.app/healthz       # expect "ok"
@@ -396,7 +396,7 @@ curl -X POST https://<worker>.workers.dev/line/webhook # expect 401 (no sig)
 1. ✅ Gemini CLI binary → `@google/gemini-cli@0.41.2` (matched to upstream `Dockerfile.gemini`). `--acp` is native.
 2. ✅ Northflank plan SKU → `nf-compute-100-2` (1 dedicated vCPU / 2 GB / ~$24/mo). Smaller shared-vCPU SKUs OOM under Chromium.
 5. ✅ Structured events → tail `$GEMINI_TELEMETRY_OUTFILE` (Gemini-native JSON line stream). No upstream wrapping needed.
-6. ✅ Cloudinary vs Cloudflare R2 → confirmed Cloudflare R2 (the brief said "Cloudinary" by typo).
+6. ✅ Cloudinary vs Cloudflare → confirmed Cloudflare (the brief said "Cloudinary" by typo). Original plan targeted Cloudflare R2; the live deploy switched to Cloudflare Workers KV (`IMG_KV`) to avoid R2's credit-card requirement; trade-offs documented in `documents/FEAT-1/development/cloudflare-webhook.md`.
 7. ✅ OpenAB pre-built binaries → upstream does not publish them; we compile from source in the Docker build (cached after first run).
 8. ✅ Gemini CLI ACP support → confirmed in `gemini --help` and bundled docs; upstream `Dockerfile.gemini` already uses `args = ["--acp"]`.
 9. ✅ Cloudflare Workers free tier SSE → 10 ms CPU limit blocks long-lived SSE; Workers Paid ($5/mo) required for the proxy route.

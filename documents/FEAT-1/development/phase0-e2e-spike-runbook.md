@@ -21,7 +21,7 @@ Things you need at hand **before** running anything below:
 | Google AI Studio API key | https://aistudio.google.com/apikey | Free tier; rotate it after the spike since it'll appear in container logs at debug level. |
 | GitHub fine-grained PAT | https://github.com/settings/tokens?type=beta | Scopes: read on all repos + `pull_requests:write` on the curated list. |
 | Northflank account + project | https://northflank.com | Create a project named `feat1-spike`. |
-| Cloudflare account | https://cloudflare.com | Workers Paid plan ($5/mo) for SSE. R2 bucket `openab-line-images`. KV namespace `WEBHOOK_DEDUP`. |
+| Cloudflare account | https://cloudflare.com | Workers Paid plan ($5/mo) for SSE. KV namespace `IMG_KV`. KV namespace `WEBHOOK_DEDUP`. |
 | `wrangler` CLI authenticated | `wrangler login` | |
 
 You should also have read:
@@ -40,9 +40,13 @@ wrangler kv:namespace create WEBHOOK_DEDUP
 wrangler kv:namespace create WEBHOOK_DEDUP --preview
 # Paste both ids into wrangler.toml under [[kv_namespaces]].
 
-# R2 bucket (skip if it already exists; lifecycle rule "delete after 1 day"
-# must be added in the dashboard separately).
-wrangler r2 bucket create openab-line-images
+# Screenshot host: a second KV namespace, NOT an R2 bucket. R2 requires a
+# credit card to enable; KV's free tier (1 GB, 25 MB per value) is comfortably
+# enough for screenshots capped at 24h TTL. See cloudflare-webhook.md's
+# "Why KV instead of R2" Note for the trade-off + migration path.
+wrangler kv:namespace create IMG_KV
+wrangler kv:namespace create IMG_KV --preview
+# Paste the two ids into wrangler.toml's second [[kv_namespaces]] block.
 
 # Set production secrets (one per command, prompted for value).
 wrangler secret put LINE_CHANNEL_SECRET
@@ -56,7 +60,7 @@ npm run build
 npm run deploy
 ```
 
-You should now have a Worker URL like `https://openab-line-edge.<account>.workers.dev`. Note it down — `agent-runtime`'s `CF_IMG_BASE_URL` points here.
+You should now have a Worker URL like `https://ai-agent-edge-server.<account>.workers.dev`. Note it down — `agent-runtime`'s `CF_IMG_BASE_URL` points here.
 
 **Spike-only escape hatch:** while you're iterating, you can temporarily set `LINE_ALLOWED_USER_IDS` to `*` (wildcard) to bootstrap the LINE userId collection. **Remove the wildcard before any non-spike use.**
 
@@ -101,7 +105,7 @@ If both `curl`s succeed, push to Northflank:
 
 ```
 Channel → Messaging API → Webhook URL:
-   https://openab-line-edge.<account>.workers.dev/line/webhook
+   https://ai-agent-edge-server.<account>.workers.dev/line/webhook
 → Verify → expect "Success"
 → Use webhook = ON
 ```
@@ -137,7 +141,7 @@ Each invited LINE user scans the bot QR code (`Messaging API` tab) and sends "hi
 - An image LINE message arrives within ~15 s with the rendered example.com homepage.
 - A short text confirmation follows (e.g. "Screenshot above ⤴").
 - `gemini-events.jsonl` shows tool_calls for both Playwright tools and `run_shell_command` against `post-screenshot.sh` then `send-line-image.sh`.
-- R2 bucket has a new object under `images/<YYYY-MM-DD>/<uuid>.png`.
+- `IMG_KV` namespace has a new key matching the `<uuid>.png` filename emitted by `post-screenshot.sh`. Inspect with `wrangler kv:key list --binding=IMG_KV` (or the Cloudflare dashboard).
 **Fail diagnostics:**
 - Image never arrives but text says "Screenshot above": check `send-line-image.sh` exit code in events log; also `curl /img/<uuid>.png` via the Worker to verify the URL is reachable.
 - Agent emits an `IMG <url>` text line instead of calling the script: update `system.md` and rebuild. (Sanity check that the rebuild reached the running container — `docker exec ... cat /home/node/.gemini/system.md` should show the new content.)
@@ -176,7 +180,7 @@ If the actual field names differ, update `agent-runtime/scripts/events-emitter.j
 
 ### Check 4.7 — Dashboard live feed end-to-end
 
-**Action:** Open `https://openab-dashboard.pages.dev/dashboard/login`, paste `DASHBOARD_TOKEN`, navigate to `/dashboard`. From LINE, send any message.
+**Action:** Open `https://ai-agent-dashboard.pages.dev/dashboard/login`, paste `DASHBOARD_TOKEN`, navigate to `/dashboard`. From LINE, send any message.
 
 **Pass:**
 - Within ~2 s of the LINE message, the dashboard shows a `message_in` row, then `tool_call` / `tool_result` rows, then `message_out`.

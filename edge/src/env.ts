@@ -1,5 +1,5 @@
 export interface Env {
-  IMG_BUCKET: R2Bucket;
+  IMG_KV: KVNamespace;
   WEBHOOK_DEDUP: KVNamespace;
   GATEWAY_BASE_URL: string;
   SIDECAR_BASE_URL: string;
