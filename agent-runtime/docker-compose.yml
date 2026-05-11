@@ -1,0 +1,10 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8080:8080" # openab-gateway: LINE webhook + WS for openab core
+      - "8081:8081" # Node sidecar: dashboard endpoints
+    env_file: .env
+    volumes:
+      - ./local-sessions:/var/lib/openab/sessions
+      - ./local-logs:/var/log/openab

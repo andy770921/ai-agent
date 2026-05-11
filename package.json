@@ -1,13 +1,13 @@
 {
-  "name": "claude-code-fullstack-boilerplate",
+  "name": "openab-line-agent",
   "private": true,
   "version": "1.0.0",
-  "description": "Fullstack boilerplate with Next.js frontend and NestJS backend",
+  "description": "FEAT-1: LINE-driven LLM agent on Northflank (OpenAB + Gemini + Playwright + GitHub) with a Cloudflare-Pages dashboard",
   "packageManager": "npm@10.0.0",
   "workspaces": [
     "frontend",
-    "backend",
-    "shared"
+    "shared",
+    "edge"
   ],
   "scripts": {
     "dev": "turbo run dev",

@@ -1,105 +1,165 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
 
 ## Project Overview
 
-Fullstack monorepo with Next.js frontend and NestJS backend. Uses npm workspaces + Turborepo for unified dependency management.
+FEAT-1 — a LINE-driven LLM agent system. Three independently-deployed
+components plus a Docker container:
 
 ```
-├── frontend/           # Next.js 15 (App Router) + TanStack Query + Jest — port 3001
-├── backend/            # NestJS 11 + nodemon — port 3000
-├── shared/             # Shared TypeScript types (@repo/shared)
-├── .claude/commands/   # Custom slash commands
-├── documents/          # Work tracking (organized by ticket)
-├── turbo.json          # Turborepo configuration
-└── package.json        # npm workspaces root
+├── frontend/        # Next.js 15 — dashboard (Cloudflare Pages, static export)
+├── shared/          # @repo/shared — AgentEvent / SessionSummary / health types
+├── edge/            # Cloudflare Worker — webhook + R2 images + dashboard BFF
+├── agent-runtime/   # Docker container for Northflank (NOT an npm workspace)
+├── documents/       # Per-ticket plans (PRDs + implementation docs)
+├── .claude/         # Custom slash commands
+├── turbo.json       # Turborepo task graph
+└── package.json     # npm workspaces root (frontend + shared + edge)
 ```
+
+The original NestJS `backend/` workspace was removed when the boilerplate was
+repurposed for FEAT-1; the dashboard talks directly to the Cloudflare Worker.
 
 ## Commands
 
 ```bash
-npm install              # Install all dependencies
-npm run dev              # Start FE (:3001) + BE (:3000) in parallel
-npm run build            # Build all workspaces
-npm run test             # Run all tests
-npm run lint             # Lint all code
+npm install                          # install all workspace deps
+npm run dev --workspace=frontend     # dashboard at http://localhost:3001
+npm run dev --workspace=@repo/edge   # Worker via `wrangler dev`
+npm run build                        # build everything via turbo
+npm run test --workspace=@repo/edge  # Vitest tests for the Worker
+npm run lint                         # eslint across all workspaces
 ```
 
-**Backend tests:**
+**Run a single Worker test:**
 ```bash
-cd backend && npm run test          # Jest unit tests
-cd backend && npm run test:watch    # Watch mode
-cd backend && npm run test:cov      # Coverage report
-cd backend && npm run test:e2e      # E2E tests
+cd edge && npx vitest run test/lineWebhook.test.ts
 ```
 
-**Run a single test file:**
+**Frontend tests (Jest):**
 ```bash
 cd frontend && npx jest src/path/to/file.spec.ts
-cd backend  && npx jest src/path/to/file.spec.ts
+```
+
+**Build the dashboard for Cloudflare Pages:**
+```bash
+npm run build:pages --workspace=frontend
+# Output: frontend/out/  (deploy via `npm run pages-deploy --workspace=frontend`)
 ```
 
 ## Architecture
 
-### Request Flow
+### Request flow (LINE → agent → LINE)
 
-Frontend home page → `useHealth()` (TanStack Query) → fetches `${NEXT_PUBLIC_API_URL}/api/health` → NestJS controller returns `HealthResponse` (shared type).
+1. LINE Platform POSTs the webhook to the Cloudflare Worker (`edge/`).
+2. Worker verifies `X-Line-Signature` (fast-fail pre-check), dedupes
+   `webhookEventId` via KV, and forwards `rawBody` unchanged to
+   `https://<container>.northflank.app/webhook/line`.
+3. `openab-gateway` (Rust) re-verifies HMAC, generates an `event_id`, caches
+   `event_id → replyToken` for 50 s, and pushes the event over a loopback
+   WebSocket to `openab` core.
+4. `openab` spawns (or reuses) a `gemini --acp` subprocess for the LINE
+   userId's session. Gemini uses Playwright MCP / GitHub MCP as needed.
+5. The agent's text reply travels back the same path; the gateway uses LINE
+   Reply API while the `replyToken` is fresh and falls back to Push API.
+6. Image replies bypass the gateway: the agent runs `post-screenshot.sh`
+   (uploads to R2 via the Worker) and `send-line-image.sh` (POSTs LINE Push
+   API directly using the `LINE_CHANNEL_ACCESS_TOKEN` exposed via
+   `openab.toml` `[agent].env`).
 
-- **API client**: `frontend/src/utils/fetchers/fetchers.client.ts` constructs URLs from `NEXT_PUBLIC_API_URL` (default: `http://localhost:3000`)
-- **TanStack Query provider**: `frontend/src/app/providers.tsx` — wraps app, passes default fetch function
-- **Query hooks**: `frontend/src/queries/` — use shared types for response typing
+### Dashboard event flow
 
-### Shared Types
+- Gemini CLI writes JSON-line telemetry to `$GEMINI_TELEMETRY_OUTFILE`.
+- A Node sidecar inside the container tails the file and reshapes each event
+  to the `AgentEvent` shape (`shared/src/types/agent-events.ts`).
+- The sidecar serves `GET /events/stream` (SSE) + `/sessions` + history at
+  port 8081, auth-gated by `DASHBOARD_INGEST_TOKEN`.
+- The Cloudflare Worker proxies `/api/sessions/stream` etc. with a separate
+  `DASHBOARD_TOKEN` bearer so a frontend-token leak doesn't grant container
+  access.
+- The Next.js dashboard consumes SSE via a `fetch`-based reader (not
+  `EventSource`) so the bearer travels via the `Authorization` header instead
+  of the URL.
 
-`shared/src/types/` exports interfaces used by both frontend and backend:
-- `HealthResponse` — `{ status: 'ok' | 'error', timestamp: string }`
-- `ApiResponse<T>` — generic wrapper
+### Shared types
 
-Import as: `import { HealthResponse } from '@repo/shared'`
+`shared/src/types/`:
 
-### Backend Structure
+- `agent-events.ts` — `AgentMessageIn | AgentToolCall | AgentToolResult | AgentMessageOut` union, plus `SessionSummary`.
+- `health.ts`, `api.ts` — generic boilerplate types kept for future use.
 
-- `src/main.ts` — bootstraps NestJS, enables CORS (`origin: true, credentials: true`), mounts Swagger UI at `/` and JSON at `/api-json`
-- `src/app.module.ts` — root module, loads global `ConfigModule` (reads `.env`)
-- DTOs in `src/dto/` implement shared interfaces and add Swagger decorators
+Import as `import { AgentEvent } from '@repo/shared'`.
 
-### Environment Variables
+### Environment variables
 
-Copy `.env.example` to `.env` in each workspace before running:
-- `backend/.env` — `NODE_ENV`, `PORT` (default 3000)
-- `frontend/.env.local` — `NEXT_PUBLIC_API_URL` (default `http://localhost:3000`)
+Each workspace has its own `.env.example`:
 
-## Code Style
+- `frontend/.env.local` — `NEXT_PUBLIC_WORKER_URL` for the dashboard.
+- `edge/.dev.vars` — Cloudflare Worker secrets (`LINE_CHANNEL_SECRET`,
+  `LINE_ALLOWED_USER_IDS`, `CF_UPLOAD_SECRET`, `DASHBOARD_INGEST_TOKEN`,
+  `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
+- `agent-runtime/.env` — container env (LINE channel creds, `GEMINI_API_KEY`,
+  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, etc.). Production values via the
+  Northflank secret manager.
 
-- **Prettier**: semi, 2-space tabs, 100 print width, single quotes, trailing commas
-- **ESLint**: unified root `.eslintrc.js` — TypeScript, Next.js, Prettier; all packages at root
-- **TypeScript**: strict mode; frontend uses `moduleResolution: bundler`; backend uses CommonJS + decorators; shared uses CommonJS
+The complete env-var table with who-reads-what is in
+`documents/FEAT-1/development/gemini-cli-tools.md` Step 6.
 
-## Documentation Pattern
+## Upstream verification
+
+Before making non-trivial changes to `agent-runtime/`, read
+`documents/FEAT-1/development/openab-upstream-findings.md`. It documents
+five upstream truths that override the PRD where they disagree:
+
+1. `openab` and `openab-gateway` are **two separate binaries / crates**.
+2. OpenAB TOML uses **singular** `[gateway]` and `[agent]` (not `[gateways.line]` etc.).
+3. Hybrid Reply/Push is built into `openab-gateway`; we do NOT implement it.
+4. OpenAB **does not relay images**; the agent calls LINE Push API directly.
+5. Gemini CLI v0.41.x uses the **Policy Engine TOML** at `~/.gemini/policies/`,
+   not `tools.core` / `tools.exclude` / `tools.allowed` keys in `settings.json`.
+
+## Code style
+
+- **Prettier**: semi, 2-space tabs, 100 print width, single quotes, trailing commas.
+- **ESLint**: unified root `.eslintrc.js` — TypeScript, Next.js, Prettier.
+- **TypeScript**: strict; frontend uses `moduleResolution: bundler`; edge uses
+  `moduleResolution: Bundler` + Cloudflare Workers types; shared uses
+  CommonJS so it's consumable by both.
+
+## Documentation pattern
 
 Work is tracked in `documents/[TICKET-NUMBER]/`:
+
 ```
 documents/FEAT-1/
-├── plans/        # PRDs, RFCs, design decisions
-└── development/  # Implementation docs
+├── plans/        # PRDs, design decisions
+└── development/  # Per-component implementation docs + upstream-findings + e2e runbook
 ```
 
-## Custom Slash Commands
+## Custom slash commands
 
-Located in `.claude/commands/[skill-name]/SKILL.md`. Replace `[TICKET]` with ticket ID (e.g., `FEAT-1`).
+Located in `.claude/commands/[skill-name]/SKILL.md`. Replace `[TICKET]` with
+the ticket ID (e.g. `FEAT-1`).
 
-| Command | Description |
-|---------|-------------|
-| `/write-a-prd [TICKET]` | Create a PRD through systematic discovery |
-| `/grill-me [TICKET]` | Stress-test a plan through questioning |
-| `/tdd [TICKET]` | Implement features with test-driven development |
-| `/triage-issue [TICKET]` | Investigate bugs and create fix plans |
-| `/improve-codebase-architecture [TICKET]` | Find architectural improvements |
-| `/deploy-vercel [TICKET]` | Deploy to Vercel with step-by-step guidance |
+| Command                                   | Description                                 |
+| ----------------------------------------- | ------------------------------------------- |
+| `/write-a-prd [TICKET]`                   | Create a PRD through systematic discovery   |
+| `/grill-me [TICKET]`                      | Stress-test a plan through questioning      |
+| `/tdd [TICKET]`                           | Implement with test-driven development      |
+| `/triage-issue [TICKET]`                  | Investigate bugs and create fix plans       |
+| `/improve-codebase-architecture [TICKET]` | Find architectural improvements             |
+| `/deploy-vercel [TICKET]`                 | Vercel deploy walkthrough (legacy; FEAT-1 deploys to Northflank + Cloudflare instead) |
 
-## Deployment (Vercel)
+## Deployment
 
-- **Frontend**: set root directory `frontend`, auto-detected as Next.js
-- **Backend**: set root directory `backend`, runs as serverless function via `backend/api/index.ts`
-- Backend serverless limitations: cold starts, no WebSockets, 10s timeout
+- **Cloudflare Worker**: `cd edge && wrangler deploy` (after secrets + KV +
+  R2 set up — see `documents/FEAT-1/development/phase0-e2e-spike-runbook.md` §1).
+- **Dashboard**: `npm run pages-deploy --workspace=frontend` (deploys
+  `frontend/out/` to Cloudflare Pages project `openab-dashboard`).
+- **Container**: build `agent-runtime/Dockerfile` and push to Northflank
+  per `agent-runtime/.northflank/service.yaml`.
+
+The Phase 0.3 e2e spike runbook (`documents/FEAT-1/development/phase0-e2e-spike-runbook.md`)
+documents the full deploy + verification sequence.

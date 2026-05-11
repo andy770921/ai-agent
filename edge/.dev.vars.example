@@ -1,0 +1,18 @@
+# Cloudflare Worker local secrets. Copy to `.dev.vars` (gitignored) for `wrangler dev`.
+# In production these are set via `wrangler secret put <NAME>`.
+# Never commit real secrets. Placeholders use the *_HERE suffix per ShopBack security policy.
+
+# --- LINE webhook verification (edge fast-fail; gateway re-verifies) ---
+LINE_CHANNEL_SECRET=YOUR_LINE_CHANNEL_SECRET_HERE
+# Comma-separated LINE userIds. During bootstrap only, may temporarily be `*`.
+LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+
+# --- Worker <-> Northflank sidecar (dashboard endpoints) ---
+DASHBOARD_INGEST_TOKEN=YOUR_DASHBOARD_INGEST_TOKEN_HERE
+
+# --- Worker <-> R2 image uploads (container -> Worker PUT /img) ---
+CF_UPLOAD_SECRET=YOUR_CF_UPLOAD_SECRET_HERE
+
+# --- Dashboard frontend <-> Worker ---
+# Bearer the dashboard pastes into /dashboard/login and sends as Authorization.
+DASHBOARD_TOKEN=YOUR_DASHBOARD_TOKEN_HERE

@@ -1,0 +1,33 @@
+name = "openab-line-edge"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# === R2 bucket for screenshots (24h lifecycle configured in CF dashboard) ===
+[[r2_buckets]]
+binding = "IMG_BUCKET"
+bucket_name = "openab-line-images"
+
+# === KV namespace for LINE webhookEventId dedup (~10 min TTL) ===
+# Create once with: wrangler kv:namespace create WEBHOOK_DEDUP
+# Then paste the returned id into the `id` field below.
+[[kv_namespaces]]
+binding = "WEBHOOK_DEDUP"
+id      = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+
+[vars]
+# openab-gateway endpoint — receives /webhook/line forwards from this Worker.
+GATEWAY_BASE_URL = "https://openab-line-agent.northflank.app"
+# Node sidecar endpoint — receives /events/stream + /sessions proxies.
+# Northflank exposes a second port at a separate hostname slot; fill in after deploy.
+SIDECAR_BASE_URL = "https://openab-line-agent--8081.northflank.app"
+# Origin that hosts the dashboard frontend (Cloudflare Pages).
+DASHBOARD_ORIGIN = "https://openab-dashboard.pages.dev"
+
+# === Secrets (set via `wrangler secret put <NAME>`) ===
+# LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge
+# LINE_ALLOWED_USER_IDS  — comma-separated allowlist (edge fast-fail)
+# CF_UPLOAD_SECRET       — bearer for /img PUT (container -> Worker)
+# DASHBOARD_INGEST_TOKEN — bearer for /events/stream + /sessions (Worker -> sidecar)
+# DASHBOARD_TOKEN        — bearer the frontend sends on /api/*

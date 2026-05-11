@@ -17,6 +17,12 @@ out/
 .env.local
 .env.*.local
 
+# Cloudflare Wrangler local secrets (edge/.dev.vars). The committed
+# .dev.vars.example is the template; .dev.vars itself must NEVER be checked in.
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
 # IDE
 .idea/
 .vscode/

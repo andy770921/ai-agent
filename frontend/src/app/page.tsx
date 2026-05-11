@@ -1,20 +1,16 @@
-'use client';
-
-import { useHealth } from '@/queries/use-health';
+import Link from 'next/link';
 
 export default function Home() {
-  const { data, isPending, error } = useHealth();
-
   return (
-    <main>
-      <h1>Frontend App</h1>
-      {isPending && <p>Checking backend status…</p>}
-      {error && <p>Error: {error.message}</p>}
-      {data && (
-        <p>
-          Backend: <strong>{data.status}</strong> — {data.timestamp}
-        </p>
-      )}
+    <main style={{ padding: '32px 24px', maxWidth: 720, margin: '0 auto' }}>
+      <h1>OpenAB LINE agent — dashboard host</h1>
+      <p>
+        This Next.js app is deployed as a static export to Cloudflare Pages and
+        hosts the FEAT-1 agent dashboard.
+      </p>
+      <p>
+        <Link href="/dashboard">→ Open the dashboard</Link>
+      </p>
     </main>
   );
 }
