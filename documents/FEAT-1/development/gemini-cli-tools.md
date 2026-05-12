@@ -66,8 +66,10 @@ agent-runtime/
 
 ```dockerfile
 # GitHub MCP server (Go binary). Pin a release.
-ARG GH_MCP_VERSION=0.6.0
-RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_${GH_MCP_VERSION}_Linux_x86_64.tar.gz" \
+# NOTE: v1.0.x changed the asset naming convention — the version number is no
+# longer embedded in the tarball filename.
+ARG GH_MCP_VERSION=1.0.4
+RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz" \
     | tar -xz -C /tmp \
  && mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server \
  && rm -rf /tmp/*

@@ -56,7 +56,7 @@ agent-runtime/
 
 ```dockerfile
 # === Stage 1: Build openab + openab-gateway from source ===
-FROM rust:1.83-slim-bookworm AS openab-build
+FROM rust:1.95-slim-bookworm AS openab-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config libssl-dev ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
@@ -109,8 +109,8 @@ RUN npx --yes playwright install chromium
 # GitHub MCP server (Go binary). The upstream tutorial (bundle/docs/cli/tutorials/mcp-setup.md)
 # uses the docker image; we use the bare binary because docker-in-docker on
 # Northflank's smaller plans is finicky. Both produce the same protocol.
-ARG GH_MCP_VERSION=0.6.0
-RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_${GH_MCP_VERSION}_Linux_x86_64.tar.gz" \
+ARG GH_MCP_VERSION=1.0.4
+RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz" \
     | tar -xz -C /tmp \
  && mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server \
  && rm -rf /tmp/github-mcp-server*
