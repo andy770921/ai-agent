@@ -55,8 +55,8 @@ RUN npx --yes playwright install chromium \
  && chmod -R a+rX /ms-playwright
 
 # --- GitHub MCP server (Go binary release) ---
-ARG GH_MCP_VERSION=0.6.0
-RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_${GH_MCP_VERSION}_Linux_x86_64.tar.gz" \
+ARG GH_MCP_VERSION=1.0.4
+RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v${GH_MCP_VERSION}/github-mcp-server_Linux_x86_64.tar.gz" \
     | tar -xz -C /tmp \
  && mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server \
  && rm -rf /tmp/github-mcp-server*
