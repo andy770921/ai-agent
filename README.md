@@ -136,11 +136,17 @@ huggingface.co/settings/tokens with `write` permission).
 
 ## Costs
 
-Fixed cost target ~$5/mo:
+Fixed cost: **$0/mo** — fully free-tier stack.
 
-- Hugging Face Spaces (Docker, `cpu-basic`) — $0 (free tier, 2 vCPU / 16 GB).
-- Cloudflare Workers Paid plan — $5/mo. The free tier's 10 ms CPU limit
-  blocks the long-lived SSE proxy used by the dashboard.
+- **Hugging Face Spaces** (Docker, `cpu-basic`) — $0. 2 vCPU / 16 GB RAM.
+- **Cloudflare Workers** (free plan) — $0. The 10 ms limit is **CPU execution
+  time only**; I/O waiting (including SSE streaming) does not count. A
+  passthrough SSE proxy typically uses < 2 ms CPU per request, well within the
+  limit. Key free-tier constraints:
+  - 100,000 requests/day (each new SSE connection = 1 request; long-lived
+    connections staying open are fine)
+  - KV: 1 GB storage, 100k reads/day, 1k writes/day
+- **Cloudflare Pages** — $0. Static export hosting, unlimited requests.
 
 ## Claude Code commands
 
