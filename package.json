@@ -3,7 +3,6 @@
   "private": true,
   "version": "1.0.0",
   "description": "FEAT-1: LINE-driven LLM agent on HF Spaces (OpenAB + Gemini + Playwright + GitHub) with a Cloudflare-Pages dashboard",
-  "packageManager": "npm@10.0.0",
   "workspaces": [
     "frontend",
     "shared",
