@@ -1,7 +1,7 @@
 # =============================================================================
 # FEAT-1 agent-runtime container
 # Mirrors the architecture documented in documents/FEAT-1/development/
-#   - northflank-container.md
+#   - northflank-container.md (historical)
 #   - openab-config.md
 #   - gemini-cli-tools.md
 #
@@ -86,6 +86,7 @@ COPY scripts/entrypoint.sh        /usr/local/bin/entrypoint.sh
 COPY scripts/render-config.sh     /usr/local/bin/render-config.sh
 COPY scripts/healthz.js           /usr/local/bin/healthz.js
 COPY scripts/events-emitter.js    /usr/local/bin/events-emitter.js
+COPY scripts/hf-proxy.js          /usr/local/bin/hf-proxy.js
 COPY scripts/post-screenshot.sh   /usr/local/bin/post-screenshot.sh
 COPY scripts/send-line-image.sh   /usr/local/bin/send-line-image.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
@@ -99,7 +100,7 @@ ENV NODE_ENV=production \
     OPENAB_CONFIG=/etc/openab/openab.toml \
     OPENAB_SESSION_DIR=/var/lib/openab/sessions
 
-EXPOSE 8080 8081
+EXPOSE 7860 8080 8081
 VOLUME ["/var/lib/openab/sessions"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \

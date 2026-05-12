@@ -7,7 +7,7 @@ LINE_CHANNEL_SECRET=YOUR_LINE_CHANNEL_SECRET_HERE
 # Comma-separated LINE userIds. During bootstrap only, may temporarily be `*`.
 LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
 
-# --- Worker <-> Northflank sidecar (dashboard endpoints) ---
+# --- Worker <-> container sidecar (dashboard endpoints) ---
 DASHBOARD_INGEST_TOKEN=YOUR_DASHBOARD_INGEST_TOKEN_HERE
 
 # --- Worker <-> KV image uploads (container -> Worker PUT /img) ---

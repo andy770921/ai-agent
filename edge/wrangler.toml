@@ -20,11 +20,9 @@ id      = "4970d7004f4048828d90aa68356adb5c"
 preview_id = "b65a95d265a1452990013153fda8df19"
 
 [vars]
-# openab-gateway endpoint — receives /webhook/line forwards from this Worker.
-GATEWAY_BASE_URL = "https://openab-line-agent.northflank.app"
-# Node sidecar endpoint — receives /events/stream + /sessions proxies.
-# Northflank exposes a second port at a separate hostname slot; fill in after deploy.
-SIDECAR_BASE_URL = "https://openab-line-agent--8081.northflank.app"
+# openab-gateway + sidecar — both behind a single HF Spaces reverse proxy on :7860.
+GATEWAY_BASE_URL = "https://andy770921-ai-agent.hf.space"
+SIDECAR_BASE_URL = "https://andy770921-ai-agent.hf.space"
 # Origin that hosts the dashboard frontend (Cloudflare Pages).
 DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 

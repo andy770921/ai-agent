@@ -12,7 +12,7 @@ components plus a Docker container:
 ├── frontend/        # Next.js 15 — dashboard (Cloudflare Pages, static export)
 ├── shared/          # @repo/shared — AgentEvent / SessionSummary / health types
 ├── edge/            # Cloudflare Worker — webhook + KV-hosted images + dashboard BFF
-├── agent-runtime/   # Docker container for Northflank (NOT an npm workspace)
+├── agent-runtime/   # Docker container for HF Spaces (NOT an npm workspace)
 ├── documents/       # Per-ticket plans (PRDs + implementation docs)
 ├── .claude/         # Custom slash commands
 ├── turbo.json       # Turborepo task graph
@@ -56,7 +56,7 @@ npm run build:pages --workspace=frontend
 1. LINE Platform POSTs the webhook to the Cloudflare Worker (`edge/`).
 2. Worker verifies `X-Line-Signature` (fast-fail pre-check), dedupes
    `webhookEventId` via KV, and forwards `rawBody` unchanged to
-   `https://<container>.northflank.app/webhook/line`.
+   `https://andy770921-ai-agent.hf.space/webhook/line`.
 3. `openab-gateway` (Rust) re-verifies HMAC, generates an `event_id`, caches
    `event_id → replyToken` for 50 s, and pushes the event over a loopback
    WebSocket to `openab` core.
@@ -83,6 +83,16 @@ npm run build:pages --workspace=frontend
   `EventSource`) so the bearer travels via the `Authorization` header instead
   of the URL.
 
+### HF Spaces port routing
+
+HF Spaces only exposes port 7860. A reverse proxy (`hf-proxy.js`) routes:
+
+- `/webhook/*`, `/health` → `:8080` (openab-gateway)
+- everything else → `:8081` (Node sidecar)
+
+Activated by `HF_SPACE=1` env var. Without it, the container works as before
+with separate ports.
+
 ### Shared types
 
 `shared/src/types/`:
@@ -100,9 +110,9 @@ Each workspace has its own `.env.example`:
 - `edge/.dev.vars` — Cloudflare Worker secrets (`LINE_CHANNEL_SECRET`,
   `LINE_ALLOWED_USER_IDS`, `CF_UPLOAD_SECRET`, `DASHBOARD_INGEST_TOKEN`,
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
-- `agent-runtime/.env` — container env (LINE channel creds, `GEMINI_API_KEY`,
-  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, etc.). Production values via the
-  Northflank secret manager.
+- HF Space secrets — container env (LINE channel creds, `GEMINI_API_KEY`,
+  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, `HF_SPACE=1`, etc.). Set via
+  HF Space Settings → Repository secrets.
 
 The complete env-var table with who-reads-what is in
 `documents/FEAT-1/development/gemini-cli-tools.md` Step 6.
@@ -136,6 +146,10 @@ Work is tracked in `documents/[TICKET-NUMBER]/`:
 documents/FEAT-1/
 ├── plans/        # PRDs, design decisions
 └── development/  # Per-component implementation docs + upstream-findings + e2e runbook
+
+documents/FEAT-2/
+├── plans/        # HF Spaces migration PRD
+└── development/  # Migration implementation guide
 ```
 
 ## Custom slash commands
@@ -150,7 +164,7 @@ the ticket ID (e.g. `FEAT-1`).
 | `/tdd [TICKET]`                           | Implement with test-driven development      |
 | `/triage-issue [TICKET]`                  | Investigate bugs and create fix plans       |
 | `/improve-codebase-architecture [TICKET]` | Find architectural improvements             |
-| `/deploy-vercel [TICKET]`                 | Vercel deploy walkthrough (legacy; FEAT-1 deploys to Northflank + Cloudflare instead) |
+| `/deploy-vercel [TICKET]`                 | Deploy to Vercel (legacy)                   |
 
 ## Deployment
 
@@ -161,8 +175,9 @@ the ticket ID (e.g. `FEAT-1`).
   `documents/FEAT-1/development/phase0-e2e-spike-runbook.md` §1).
 - **Dashboard**: `npm run pages-deploy --workspace=frontend` (deploys
   `frontend/out/` to Cloudflare Pages project `ai-agent-dashboard`).
-- **Container**: build `agent-runtime/Dockerfile` and push to Northflank
-  per `agent-runtime/.northflank/service.yaml`.
+- **Container**: pushed to HF Spaces via GitHub Actions
+  (`.github/workflows/hf-sync.yml`). The workflow syncs `agent-runtime/`
+  contents to the HF Space repo on every push to `main`.
 
 The Phase 0.3 e2e spike runbook (`documents/FEAT-1/development/phase0-e2e-spike-runbook.md`)
 documents the full deploy + verification sequence.

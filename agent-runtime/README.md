@@ -6,7 +6,8 @@ This directory is **not** an npm workspace; it's a Docker build context. Everyth
 
 For the architecture rationale, deployment plan, and per-component design notes, see:
 - `../documents/FEAT-1/plans/prd.md`
-- `../documents/FEAT-1/development/northflank-container.md`
+- `../documents/FEAT-1/development/northflank-container.md` (historical; container now deploys to HF Spaces)
+- `../documents/FEAT-2/development/hf-spaces-migration.md`
 - `../documents/FEAT-1/development/openab-config.md`
 - `../documents/FEAT-1/development/gemini-cli-tools.md`
 - `../documents/FEAT-1/development/line-integration.md`
@@ -32,9 +33,10 @@ curl http://localhost:8081/healthz   # sidecar
 - `scripts/render-config.sh` — env-var interpolation + CSV→TOML-array conversion.
 - `scripts/healthz.js` — Node sidecar: `/healthz`, `/events/stream`, `/sessions`.
 - `scripts/events-emitter.js` — tails `$GEMINI_TELEMETRY_OUTFILE`, reshapes to `AgentEvent`.
+- `scripts/hf-proxy.js` — reverse proxy consolidating `:8080`+`:8081` → `:7860` for HF Spaces.
 - `scripts/post-screenshot.sh` — uploads PNG to the Cloudflare Worker `/img` endpoint.
 - `scripts/send-line-image.sh` — POSTs a LINE image-message via Push API.
-- `.northflank/service.yaml` — Northflank service definition.
+- `hf-README.md` — HF Space metadata (synced as `README.md` to the Space repo).
 
 ## Phase 0.3 first
 

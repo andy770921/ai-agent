@@ -1,0 +1,58 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent-runtime/**'
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push agent-runtime to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          # Clone the HF Space repo
+          git clone https://user:${HF_TOKEN}@huggingface.co/spaces/andy770921/ai-agent hf-space
+
+          # Clear old content (keep .git)
+          cd hf-space
+          find . -maxdepth 1 ! -name '.git' ! -name '.' -exec rm -rf {} +
+
+          # Copy agent-runtime contents as the repo root
+          cp -r ../agent-runtime/* .
+          cp -r ../agent-runtime/.* . 2>/dev/null || true
+
+          # Copy the HF-specific README (overwrites agent-runtime/README.md)
+          cp ../agent-runtime/hf-README.md README.md
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to sync"
+          else
+            git commit -m "sync from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+            git push
+          fi
+
+  keep-alive:
+    runs-on: ubuntu-latest
+    # Only run on schedule, not on push
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Ping HF Space to prevent sleep
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://andy770921-ai-agent.hf.space/ || true)
+          echo "HF Space responded with HTTP $STATUS"

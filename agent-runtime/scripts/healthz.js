@@ -1,5 +1,4 @@
 // Node sidecar — owns the dashboard endpoints on :8081.
-// See documents/FEAT-1/development/northflank-container.md Step 6.
 
 const http = require('node:http');
 const { spawn } = require('node:child_process');
