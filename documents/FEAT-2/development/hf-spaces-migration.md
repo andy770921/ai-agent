@@ -117,6 +117,6 @@ Then redeploy: `cd edge && wrangler deploy`
 
 1. Push a change to `agent-runtime/` on `main` → check GitHub Actions runs the sync job
 2. Check HF Space build log at `https://huggingface.co/spaces/andy770921/ai-agent`
-3. `curl https://andy770921-ai-agent.hf.space/` → should return `ok`
+3. `curl https://andy770921-ai-agent.hf.space/` → should return a plain-text status page listing all available endpoints
 4. `curl https://andy770921-ai-agent.hf.space/health` → gateway health
 5. Send a LINE message → verify the full webhook → agent → reply flow

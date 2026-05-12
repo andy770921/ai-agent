@@ -16,9 +16,24 @@ function pickTarget(url) {
 }
 
 const server = http.createServer((req, res) => {
-  // Root path returns 200 so HF health-check sees the space as running.
+  // Root path: status page for HF Space UI + HF health-check.
   if (req.url === '/') {
-    res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
+    const status = [
+      'openab-agent-runtime',
+      '',
+      'Public endpoints (no auth):',
+      '  GET  /health          — gateway health check',
+      '  GET  /healthz         — sidecar health check',
+      '',
+      'LINE webhook (HMAC signature):',
+      '  POST /webhook/line    — LINE Platform webhook',
+      '',
+      'Dashboard API (Bearer token):',
+      '  GET  /events/stream   — SSE event stream',
+      '  GET  /sessions        — active session list',
+      '  GET  /sessions/:userId/history — session history',
+    ].join('\n');
+    res.writeHead(200, { 'content-type': 'text/plain' }).end(status);
     return;
   }
 

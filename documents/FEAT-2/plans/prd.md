@@ -49,8 +49,8 @@ services:
 `:7860` and routes by URL path:
 
 - `/webhook/*`, `/health` → `:8080` (gateway)
-- `/` → 200 OK (HF health check)
-- everything else → `:8081` (sidecar)
+- `/` → plain-text status page listing all endpoints (also satisfies HF health check)
+- everything else → `:8081` (sidecar, requires `Bearer` token)
 
 The proxy is only started when `HF_SPACE=1` is set, so the same Dockerfile
 works for other deployment targets.
