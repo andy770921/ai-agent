@@ -14,7 +14,7 @@
 # =============================================================================
 
 # === Stage 1: Build openab + openab-gateway from upstream source ===========
-FROM rust:1.83-slim-bookworm AS openab-build
+FROM rust:1.85-slim-bookworm AS openab-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config libssl-dev ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
