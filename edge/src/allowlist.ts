@@ -1,7 +1,4 @@
-export function isAllowedUser(
-  userId: string | undefined,
-  allowlistCsv: string,
-): boolean {
+export function isAllowedUser(userId: string | undefined, allowlistCsv: string): boolean {
   if (!userId) return false;
   const allowed = allowlistCsv
     .split(',')

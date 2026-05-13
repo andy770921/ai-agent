@@ -2,6 +2,8 @@ import { isAllowedUser } from './allowlist';
 import type { Env } from './env';
 
 interface LineEvent {
+  type?: string;
+  replyToken?: string;
   webhookEventId?: string;
   deliveryContext?: { isRedelivery?: boolean };
   source?: { userId?: string };
@@ -34,12 +36,36 @@ export async function handleLineWebhook(
     return new Response('bad json', { status: 400 });
   }
 
-  // 1. Allowlist filter (edge fast-fail; gateway re-applies its own allowlist).
   const inboundEvents = payload.events ?? [];
-  const allowedEvents = inboundEvents.filter((e) =>
-    isAllowedUser(e.source?.userId, env.LINE_ALLOWED_USER_IDS),
-  );
-  if (allowedEvents.length === 0) return new Response('ok', { status: 200 });
+  console.log('webhook received', {
+    eventCount: inboundEvents.length,
+    userIds: inboundEvents.map((e) => e.source?.userId),
+    allowlistLength: env.LINE_ALLOWED_USER_IDS?.length,
+  });
+
+  // 1. Allowlist filter (edge fast-fail; gateway re-applies its own allowlist).
+  const allowedEvents: LineEvent[] = [];
+  const blockedEvents: LineEvent[] = [];
+  for (const e of inboundEvents) {
+    if (isAllowedUser(e.source?.userId, env.LINE_ALLOWED_USER_IDS)) {
+      allowedEvents.push(e);
+    } else {
+      blockedEvents.push(e);
+    }
+  }
+
+  if (blockedEvents.length > 0) {
+    console.log(
+      'blocked users',
+      blockedEvents.map((e) => e.source?.userId),
+    );
+    ctx.waitUntil(replyToBlockedUsers(env, blockedEvents));
+  }
+
+  if (allowedEvents.length === 0) {
+    console.log('all events blocked by allowlist');
+    return new Response('ok', { status: 200 });
+  }
 
   // 2. Dedup against webhookEventId — skip events already seen.
   const eventsToForward: LineEvent[] = [];
@@ -51,6 +77,7 @@ export async function handleLineWebhook(
     const key = `evt:${ev.webhookEventId}`;
     const seen = await env.WEBHOOK_DEDUP.get(key);
     if (seen || ev.deliveryContext?.isRedelivery) {
+      console.log('dedup skip', ev.webhookEventId);
       continue;
     }
     await env.WEBHOOK_DEDUP.put(key, 'processing', { expirationTtl: DEDUP_TTL_SECONDS });
@@ -61,9 +88,7 @@ export async function handleLineWebhook(
   // 3. Forward rawBody unchanged to the gateway so its HMAC re-verification
   // succeeds. The gateway has its own allowlist (openab.toml [gateway].allowed_users)
   // which will filter the same events again — that's intentional.
-  const idempotencyKey = eventsToForward
-    .map((e) => e.webhookEventId ?? 'noid')
-    .join(',');
+  const idempotencyKey = eventsToForward.map((e) => e.webhookEventId ?? 'noid').join(',');
 
   ctx.waitUntil(
     (async () => {
@@ -77,6 +102,7 @@ export async function handleLineWebhook(
           },
           body: rawBody,
         });
+        console.log('forward result', { status: r.status });
         if (!r.ok) {
           await markFailed(env, eventsToForward, `upstream ${r.status}`);
         } else {
@@ -89,6 +115,32 @@ export async function handleLineWebhook(
   );
 
   return new Response('ok', { status: 200 });
+}
+
+async function replyToBlockedUsers(env: Env, events: LineEvent[]): Promise<void> {
+  for (const ev of events) {
+    if (!ev.replyToken || ev.type === 'follow' || ev.type === 'unfollow') continue;
+    try {
+      await fetch('https://api.line.me/v2/bot/message/reply', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
+        },
+        body: JSON.stringify({
+          replyToken: ev.replyToken,
+          messages: [
+            {
+              type: 'text',
+              text: 'This service is currently unavailable. A team member will assist you shortly.',
+            },
+          ],
+        }),
+      });
+    } catch (err) {
+      console.error('reply to blocked user failed', err);
+    }
+  }
 }
 
 async function markDelivered(env: Env, events: LineEvent[]): Promise<void> {
@@ -108,7 +160,11 @@ async function markFailed(env: Env, events: LineEvent[], reason: string): Promis
   // A LINE re-delivery carries the same webhookEventId; we skip those by default.
   // To explicitly allow replay after a known upstream outage, run:
   //   wrangler kv:key delete --binding=WEBHOOK_DEDUP evt:<id>
-  console.error('forward failed', reason, events.map((e) => e.webhookEventId));
+  console.error(
+    'forward failed',
+    reason,
+    events.map((e) => e.webhookEventId),
+  );
 }
 
 async function hmacSha256Base64(secret: string, body: string): Promise<string> {
