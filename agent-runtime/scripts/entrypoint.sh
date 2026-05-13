@@ -17,20 +17,17 @@ set -eu
 # Dashboard sidecar:
 : "${DASHBOARD_INGEST_TOKEN:?missing}"
 
-# openab-gateway requires at least one platform env to be defined even if only
-# LINE is enabled. Set a harmless placeholder for Telegram so it boots; if
-# TELEGRAM_BOT_TOKEN is already set by the operator, keep it.
-export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-disabled-for-line-only-deploy}"
-
 # ===== 2. Render OpenAB TOML =================================================
 /usr/local/bin/render-config.sh /etc/openab/openab.toml /tmp/openab.toml
+
+# ===== 2b. Merge shared MCP servers into the active LLM's config ============
+AGENT_CLI="${AGENT_CLI:-gemini}" /usr/local/bin/render-mcp-config.sh
 
 # ===== 3. Start openab-gateway (background) ==================================
 GATEWAY_LISTEN="${GATEWAY_LISTEN:-0.0.0.0:8080}" \
 LINE_CHANNEL_SECRET="$LINE_CHANNEL_SECRET" \
 LINE_CHANNEL_ACCESS_TOKEN="$LINE_CHANNEL_ACCESS_TOKEN" \
-GATEWAY_TOKEN="$GATEWAY_TOKEN" \
-TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+GATEWAY_WS_TOKEN="$GATEWAY_TOKEN" \
   openab-gateway &
 gw_pid=$!
 

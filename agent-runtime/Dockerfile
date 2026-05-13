@@ -77,6 +77,7 @@ COPY --from=openab-build /src/gateway/target/release/openab-gateway /usr/local/b
 RUN mkdir -p /home/node/.gemini/policies /var/lib/openab/sessions /var/log/openab /etc/openab \
  && chown -R node:node /home/node/.gemini /var/lib/openab/sessions /var/log/openab
 COPY config/openab.toml /etc/openab/openab.toml
+COPY mcp/servers.json              /etc/openab/mcp-servers.json
 COPY --chown=node:node gemini/settings.json        /home/node/.gemini/settings.json
 COPY --chown=node:node gemini/system.md            /home/node/.gemini/system.md
 COPY --chown=node:node gemini/policies/feat1.toml  /home/node/.gemini/policies/feat1.toml
@@ -84,6 +85,7 @@ COPY --chown=node:node gemini/policies/feat1.toml  /home/node/.gemini/policies/f
 # --- Copy scripts ---
 COPY scripts/entrypoint.sh        /usr/local/bin/entrypoint.sh
 COPY scripts/render-config.sh     /usr/local/bin/render-config.sh
+COPY scripts/render-mcp-config.sh /usr/local/bin/render-mcp-config.sh
 COPY scripts/healthz.js           /usr/local/bin/healthz.js
 COPY scripts/events-emitter.js    /usr/local/bin/events-emitter.js
 COPY scripts/hf-proxy.js          /usr/local/bin/hf-proxy.js
@@ -91,6 +93,7 @@ COPY scripts/post-screenshot.sh   /usr/local/bin/post-screenshot.sh
 COPY scripts/send-line-image.sh   /usr/local/bin/send-line-image.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
              /usr/local/bin/render-config.sh \
+             /usr/local/bin/render-mcp-config.sh \
              /usr/local/bin/post-screenshot.sh \
              /usr/local/bin/send-line-image.sh
 
