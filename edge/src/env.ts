@@ -6,7 +6,7 @@ export interface Env {
   DASHBOARD_ORIGIN: string;
   LINE_CHANNEL_SECRET: string;
   LINE_CHANNEL_ACCESS_TOKEN: string;
-  LINE_ALLOWED_USER_IDS: string;
+  LINE_ALLOWED_USER_IDS?: string;
   CF_UPLOAD_SECRET: string;
   DASHBOARD_INGEST_TOKEN: string;
   DASHBOARD_TOKEN: string;

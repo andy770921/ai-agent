@@ -22,7 +22,11 @@ describe('isAllowedUser', () => {
     expect(isAllowedUser('U1', ',,U1,')).toBe(true);
   });
 
-  it('returns false against an empty allowlist', () => {
-    expect(isAllowedUser('U1', '')).toBe(false);
+  it('allows any userId when allowlist is empty (open mode)', () => {
+    expect(isAllowedUser('U1', '')).toBe(true);
+  });
+
+  it('allows any userId when allowlist is undefined', () => {
+    expect(isAllowedUser('U1', undefined)).toBe(true);
   });
 });
