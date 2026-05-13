@@ -10,7 +10,6 @@ set -eu
 : "${LINE_CHANNEL_ACCESS_TOKEN:?missing}"
 : "${GATEWAY_TOKEN:?missing}"
 # OpenAB / agent:
-: "${LINE_ALLOWED_USER_IDS:?missing}"      # comma-separated; render-config.sh converts to TOML array
 : "${GEMINI_API_KEY:?missing}"
 : "${GITHUB_TOKEN:?missing}"
 : "${CF_UPLOAD_SECRET:?missing}"

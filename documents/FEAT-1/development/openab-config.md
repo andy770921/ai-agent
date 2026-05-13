@@ -49,10 +49,9 @@ platform  = "line"
 # Optional shared secret for the OAB↔gateway WS link. If both sides set it,
 # the link rejects unauthenticated connections. Use a long random string.
 token     = "${GATEWAY_TOKEN}"
-# Allowlist of LINE userIds. Empty/absent means "allow all" per upstream
-# auto-detect (see config.toml.example). Set explicitly to the ≤5 invited
-# userIds before the LINE bot is exposed publicly.
-allowed_users = "${LINE_ALLOWED_USER_IDS_TOML}"
+# No allowed_users — agent-runtime accepts all users forwarded by the edge
+# server. User-level filtering is handled at the Cloudflare Worker layer
+# (LINE_ALLOWED_USER_IDS in edge/.dev.vars).
 # allowed_channels = ["C..."]   # uncomment for group-chat allowlist
 
 # === Agent: Gemini CLI ===
@@ -92,46 +91,32 @@ enabled = false            # LINE does not support message reactions
 **Rationale:**
 - **`[gateway]` is singular.** OpenAB only supports one gateway link per process; multi-platform deploys run separate OpenAB pods, not multiple `[gateway]` blocks. For LINE-only FEAT-1 this is fine.
 - **`platform = "line"`** is the session-key namespace prefix (`line:{userId}`) — see ADR `line-adapter.md`.
-- **`allowed_users`** sits on the gateway block, not on the agent. The gateway is what filters inbound events, before the agent is even spawned.
-- **`LINE_ALLOWED_USER_IDS_TOML`** is a special form: TOML wants a real list, not a comma-separated string. The `render-config.sh` step below converts the comma-separated `LINE_ALLOWED_USER_IDS` env into the TOML array form `["U1","U2"]`. (We keep the comma-string in env to mirror the Worker config; the conversion is one `awk` line.)
+- **`allowed_users` removed.** User-level filtering is handled exclusively at the Cloudflare Worker (edge) layer. The agent-runtime accepts all requests forwarded by the edge server, simplifying the config and removing a duplicated concern.
 - **`max_sessions = 5`** caps RAM/process count. With a 2 GB plan, each Gemini CLI process ~250 MB + Chromium peak; five is the safe ceiling before swap.
 - **`session_ttl_hours = 168`**: a week is long enough that "remind me what you did Monday" works, short enough that abandoned threads get reaped.
 - **No `--trust-all-tools` flag.** Gemini CLI's Policy Engine (see `gemini-cli-tools.md` Step 3b) is the inner trust layer; the Northflank container is the outer trust boundary. Adding `--trust-all-tools` (or its v0.41.x equivalent `--yolo`) would collapse both, which is exactly what `plans/review.md` finding #1 warned against.
 - **`GEMINI_TELEMETRY_OUTFILE`** is the source of every `AgentEvent` on the dashboard. Once `events-emitter.js` is wired to tail it, the dashboard's live feed comes "for free" — no upstream patches, no stdout wrapping.
 - **Webhook URL, channel secret, channel access token are absent.** Those move to the **gateway process's env** (`openab-gateway`), not OpenAB. See `line-integration.md` Step 4 for where they go.
 
-### Step 3: Env interpolation + allowlist expansion at boot
+### Step 3: Env interpolation at boot
 
 **File:** `agent-runtime/scripts/render-config.sh`
 
-> **Schema corrected (per `openab-upstream-findings.md` §2).** OpenAB natively expands `${VAR}` in TOML — no `${env:VAR}` form needed. The script below is now mainly responsible for **one** non-trivial conversion: turning the comma-separated `LINE_ALLOWED_USER_IDS` env into the TOML list literal `["U1","U2"]` for `[gateway].allowed_users`. We still pipe through `envsubst` as a belt-and-braces defence against the file being read by something other than OpenAB.
+> **Schema corrected (per `openab-upstream-findings.md` §2).** OpenAB natively expands `${VAR}` in TOML — no `${env:VAR}` form needed. The script pipes through `envsubst` as a belt-and-braces defence against the file being read by something other than OpenAB.
 
 **Changes:**
 
 ```sh
 #!/bin/sh
-# Renders /etc/openab/openab.toml (with ${VAR} placeholders) into /tmp/openab.toml
-# (fully-resolved values), at container boot. Also converts the comma-separated
-# LINE_ALLOWED_USER_IDS env var into a TOML list literal that goes into
-# [gateway].allowed_users via ${LINE_ALLOWED_USER_IDS_TOML}.
+# Renders /etc/openab/openab.toml -> /tmp/openab.toml at boot.
 set -eu
 template="${1:?usage: render-config.sh <template> <out>}"
-out="${2:?}"
+out="${2:?usage: render-config.sh <template> <out>}"
 
-# Build the TOML list literal from the comma-separated env, e.g.
-#   "U1,U2 ,U3" -> ["U1","U2","U3"]
-# Empty/absent -> [] (which OpenAB's auto-detect treats as "allow all").
-ids="${LINE_ALLOWED_USER_IDS:-}"
-LINE_ALLOWED_USER_IDS_TOML="$(
-  printf '%s' "$ids" | awk -v RS=',' '{
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-    if ($0 != "") printf "%s\"%s\"", sep, $0; sep=","
-  } END { printf "%s", "" }' \
-)"
-LINE_ALLOWED_USER_IDS_TOML="[${LINE_ALLOWED_USER_IDS_TOML}]"
-export LINE_ALLOWED_USER_IDS_TOML
-
-envsubst < "$template" > "$out"
+# Pass an explicit allowlist to envsubst so unrelated $VAR-looking strings in
+# the template (e.g. inside future comments) are left alone.
+envsubst '${GATEWAY_TOKEN} ${GEMINI_API_KEY} ${GITHUB_TOKEN} ${LINE_CHANNEL_ACCESS_TOKEN} ${CF_UPLOAD_SECRET} ${CF_IMG_BASE_URL}' \
+  < "$template" > "$out"
 ```
 
 Then in `entrypoint.sh`, before `exec openab`:
@@ -141,7 +126,7 @@ Then in `entrypoint.sh`, before `exec openab`:
 exec openab run -c /tmp/openab.toml
 ```
 
-**Rationale:** OpenAB's TOML parser natively expands `${VAR}` but not array-from-CSV — doing the conversion at boot lets us keep the env var shape consistent across the Worker (`LINE_ALLOWED_USER_IDS=U1,U2,U3`) and OpenAB without needing two source-of-truth env vars.
+**Rationale:** With `allowed_users` removed from the TOML (filtering now handled at the edge layer), the script is a straightforward `envsubst` — no array conversion needed.
 
 ### Step 4: ~~Reverse-proxy decision~~ — N/A in the new architecture
 
@@ -160,7 +145,7 @@ exec openab run -c /tmp/openab.toml
 ## Testing Steps
 
 1. **Schema parse:** `openab run -c /tmp/openab.toml` (after render-config.sh has produced it). Expect the process to start and log a successful connection to `ws://127.0.0.1:8080/ws`. Kill it after a few seconds; any "missing field"/"unknown key" error surfaces in the first second.
-2. **Allowlist enforcement test:** with `LINE_ALLOWED_USER_IDS=U_test_only` set in env, POST a fake LINE event from a different userId through the gateway. The container logs should show the event being dropped at the gateway, and no Gemini process should spawn.
+2. **Open-access test:** POST a fake LINE event from any userId through the gateway. The container should accept it and spawn a Gemini session (no allowlist filtering at agent-runtime level; filtering is at the edge layer).
 3. **Session keying test:** send two messages from the same LINE userId in succession (via the LINE bot or an HMAC-signed curl). Verify there's exactly one Gemini process via `pgrep -a gemini` — the second message should reuse the existing session.
 4. **TTL test:** set `session_ttl_hours = 0.01` (~36s) for a test build, send a message, wait, send another → expect a *new* session to spawn after the TTL elapses (`pgrep -a gemini` shows a new PID).
 5. **Env-clear test:** add a sentinel like `SHOULD_BE_HIDDEN=secret` to the container env but **not** to `[agent].env`. Have the agent run `env` (it can't — the Policy Engine denies; test by adding a temporary `commandPrefix = "env"` rule). Verify `SHOULD_BE_HIDDEN` is absent. Remove the test rule before deploy.
@@ -172,8 +157,8 @@ exec openab run -c /tmp/openab.toml
 
 ## Notes
 
-- **Defense in depth:** the LINE userId allowlist is checked in **two places** (Cloudflare Worker + this `[gateway].allowed_users`). Either alone would suffice; together they fail closed if one is misconfigured.
+- **Single-layer filtering:** the LINE userId allowlist is checked at the **Cloudflare Worker** (edge) layer only. The agent-runtime accepts all forwarded requests, keeping the config simple. The edge server is the trust boundary for user filtering.
 - **No multi-agent setup:** OpenAB only supports one `[agent]` block per process. Adding Claude Code or Codex later means a second OpenAB pod, not a second `[agents.X]` block. Out of scope for v1.
 - **Group chat opt-out:** OpenAB keys LINE 1:1 sessions as `line:{userId}` and group sessions as `line:{groupId}`. Per ADR `line-adapter.md`, group sessions are shared across all members; we deliberately do not configure `allowed_channels` because the FEAT-1 use case is 1:1 only.
 - **Hot reload:** OpenAB may support config hot-reload on SIGHUP. Don't rely on it for v1; redeploy on config change.
-- **`render-config.sh`'s array conversion** is the only intelligence in the boot path. Everything else is OpenAB's native `${VAR}` expansion. Keep the script idempotent — running it twice with the same env must produce the same TOML byte-for-byte.
+- **`render-config.sh`** is now a thin `envsubst` wrapper — no array conversion needed since `allowed_users` was removed. Keep the script idempotent — running it twice with the same env must produce the same TOML byte-for-byte.

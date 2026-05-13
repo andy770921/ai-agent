@@ -62,7 +62,7 @@ npm run deploy
 
 You should now have a Worker URL like `https://ai-agent-edge-server.<account>.workers.dev`. Note it down — `agent-runtime`'s `CF_IMG_BASE_URL` points here.
 
-**Spike-only escape hatch:** while you're iterating, you can temporarily set `LINE_ALLOWED_USER_IDS` to `*` (wildcard) to bootstrap the LINE userId collection. **Remove the wildcard before any non-spike use.**
+**Spike-only escape hatch:** while you're iterating, you can temporarily set `LINE_ALLOWED_USER_IDS` to `*` (wildcard) in the **edge Worker** to bootstrap the LINE userId collection. **Remove the wildcard before any non-spike use.** (The agent-runtime no longer has its own allowlist — filtering is at the edge layer only.)
 
 ---
 
@@ -110,7 +110,7 @@ Channel → Messaging API → Webhook URL:
 → Use webhook = ON
 ```
 
-Each invited LINE user scans the bot QR code (`Messaging API` tab) and sends "hi". In your Worker logs (`wrangler tail` while LINE_ALLOWED_USER_IDS=`*`), copy the `source.userId` from each event. Replace the wildcard with the comma-separated list of userIds and `wrangler secret put LINE_ALLOWED_USER_IDS` again. Also update `LINE_ALLOWED_USER_IDS` in Northflank secrets and redeploy `agent-runtime`.
+Each invited LINE user scans the bot QR code (`Messaging API` tab) and sends "hi". In your Worker logs (`wrangler tail` while LINE_ALLOWED_USER_IDS=`*`), copy the `source.userId` from each event. Replace the wildcard with the comma-separated list of userIds and `wrangler secret put LINE_ALLOWED_USER_IDS` again. (The agent-runtime no longer maintains its own allowlist.)
 
 ---
 
@@ -226,8 +226,9 @@ If any check fails and the fix is non-trivial (>1 day), pause and reassess. Docu
 If you used a temporary LINE allowlist wildcard, scratch credentials, or extra Cloudflare Pages preview deploys, tear them down:
 
 ```sh
-# LINE: replace wildcard allowlist with the real comma-separated userIds.
+# LINE: replace wildcard allowlist with the real comma-separated userIds (edge Worker only).
 wrangler secret put LINE_ALLOWED_USER_IDS    # paste U1,U2,U3,…
+# (agent-runtime no longer has its own allowlist — no Northflank secret needed.)
 
 # Rotate the Gemini API key (it appeared in container logs at debug levels).
 # https://aistudio.google.com/apikey → revoke + create new.

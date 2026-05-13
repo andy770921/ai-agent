@@ -232,7 +232,6 @@ set -eu
 : "${LINE_CHANNEL_SECRET:?missing}"
 : "${LINE_CHANNEL_ACCESS_TOKEN:?missing}"
 # OpenAB-only env (consumed by openab via [agent].env passthrough):
-: "${LINE_ALLOWED_USER_IDS:?missing}"        # comma-separated
 : "${GEMINI_API_KEY:?missing}"
 : "${GITHUB_TOKEN:?missing}"
 : "${CF_UPLOAD_SECRET:?missing}"             # for /img PUTs
@@ -532,8 +531,7 @@ spec:
     LINE_CHANNEL_SECRET:        ${secret:line-channel-secret}
     LINE_CHANNEL_ACCESS_TOKEN:  ${secret:line-channel-access-token}
     GATEWAY_TOKEN:              ${secret:gateway-token}              # OAB↔gateway WS auth
-    # --- OpenAB ([gateway].allowed_users + [agent].env) ---
-    LINE_ALLOWED_USER_IDS:      ${secret:line-allowed-user-ids}
+    # --- OpenAB ([agent].env) ---
     GEMINI_API_KEY:             ${secret:gemini-api-key}
     GITHUB_TOKEN:               ${secret:github-token}
     CF_UPLOAD_SECRET:           ${secret:cf-upload-secret}
@@ -567,10 +565,6 @@ LINE_CHANNEL_ACCESS_TOKEN=YOUR_LINE_CHANNEL_ACCESS_TOKEN_HERE
 # Shared secret between openab core and openab-gateway WebSocket link.
 # Use a long random string; both sides must agree.
 GATEWAY_TOKEN=YOUR_OAB_GATEWAY_SHARED_TOKEN_HERE
-
-# --- LINE allowlist (consumed by openab via render-config.sh) ---
-# Comma-separated LINE userIds (no wildcard outside the bootstrap window).
-LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
 
 # --- Gemini (passed into [agent].env) ---
 # Google AI Studio API key. Free tier is enough for <=5 users.

@@ -49,12 +49,14 @@ In the [LINE Developers Console](https://developers.line.biz/console/):
 
 LINE userIds are not visible to users; they're surfaced only after the user has interacted with the bot and a webhook event has fired with `events[].source.userId`. Procedure:
 
-1. Temporarily set `LINE_ALLOWED_USER_IDS=*` (wildcard) in the Worker — see Step 3.
+1. Temporarily set `LINE_ALLOWED_USER_IDS=*` (wildcard) in the **edge Worker** — see Step 3.
 2. Each invited person scans the bot's QR code (in **Messaging API settings** → "Bot basic ID / QR code") and sends any text.
 3. Inspect the Worker's logs (`wrangler tail`) for the `events[].source.userId` value. Copy it.
-4. After all userIds are collected, set `LINE_ALLOWED_USER_IDS` to the comma-separated list. **Remove the wildcard.**
+4. After all userIds are collected, set `LINE_ALLOWED_USER_IDS` to the comma-separated list in the Worker. **Remove the wildcard.**
 
 > **Security note:** never leave `*` in production — it would let anyone DM the bot. Treat the wildcard window as a one-time bootstrap.
+>
+> **Note:** the agent-runtime no longer maintains its own allowlist. User-level filtering is handled exclusively at the Cloudflare Worker (edge) layer.
 
 **Rationale:** there's no LINE API to look up "who is in my friend list" with userIds; the webhook is the only authoritative source.
 

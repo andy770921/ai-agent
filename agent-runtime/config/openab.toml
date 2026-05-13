@@ -1,13 +1,12 @@
 # OpenAB config — singular [gateway] + [agent].
 # See documents/FEAT-1/development/openab-config.md
-# render-config.sh expands ${VAR} placeholders + ${LINE_ALLOWED_USER_IDS_TOML}
-# at container boot, writing the resolved file to /tmp/openab.toml.
+# render-config.sh expands ${VAR} placeholders at container boot,
+# writing the resolved file to /tmp/openab.toml.
 
 [gateway]
 url           = "ws://127.0.0.1:8080/ws"
 platform      = "line"
 token         = "${GATEWAY_TOKEN}"
-allowed_users = ${LINE_ALLOWED_USER_IDS_TOML}
 
 [agent]
 command     = "gemini"
