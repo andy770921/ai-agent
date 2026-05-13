@@ -88,9 +88,10 @@ SIDECAR_BASE_URL       = "https://<container>--8081.northflank.app"
 DASHBOARD_ORIGIN       = "https://ai-agent-dashboard.pages.dev"
 
 # Secrets (set via `wrangler secret put`):
-#   LINE_CHANNEL_SECRET    — for the Worker's HMAC pre-check (the gateway re-verifies)
-#   LINE_ALLOWED_USER_IDS  — comma-separated LINE userIds (edge-level fast-fail)
-#   CF_UPLOAD_SECRET       — shared bearer for /img PUT (container -> Worker)
+#   LINE_CHANNEL_SECRET       — for the Worker's HMAC pre-check (the gateway re-verifies)
+#   LINE_CHANNEL_ACCESS_TOKEN — for replying to blocked (non-allowlisted) users via LINE Reply API
+#   LINE_ALLOWED_USER_IDS     — comma-separated LINE userIds (edge-level fast-fail)
+#   CF_UPLOAD_SECRET          — shared bearer for /img PUT (container -> Worker)
 #   DASHBOARD_INGEST_TOKEN — bearer for /events/stream + /sessions (Worker -> sidecar)
 #   DASHBOARD_TOKEN        — bearer the FRONTEND uses to authenticate against /api/*
 ```
@@ -124,6 +125,7 @@ export interface Env {
   DASHBOARD_INGEST_TOKEN: string;
   DASHBOARD_TOKEN: string;
   LINE_CHANNEL_SECRET: string;
+  LINE_CHANNEL_ACCESS_TOKEN: string;
   LINE_ALLOWED_USER_IDS: string;
   CF_UPLOAD_SECRET: string;
   DASHBOARD_ORIGIN: string; // e.g. "https://ai-agent-dashboard.pages.dev"
@@ -251,10 +253,19 @@ export async function handleLineWebhook(
     return new Response('bad json', { status: 400 });
   }
 
-  // 1. Allowlist filter.
-  const allowedEvents = (payload.events ?? []).filter((e) =>
-    isAllowedUser(e.source?.userId, env.LINE_ALLOWED_USER_IDS),
-  );
+  // 1. Allowlist filter — blocked users get a service-unavailable reply via LINE Reply API.
+  const allowedEvents: LineEvent[] = [];
+  const blockedEvents: LineEvent[] = [];
+  for (const e of inboundEvents) {
+    if (isAllowedUser(e.source?.userId, env.LINE_ALLOWED_USER_IDS)) {
+      allowedEvents.push(e);
+    } else {
+      blockedEvents.push(e);
+    }
+  }
+  if (blockedEvents.length > 0) {
+    ctx.waitUntil(replyToBlockedUsers(env, blockedEvents));
+  }
   if (allowedEvents.length === 0) return new Response('ok', { status: 200 });
 
   // 2. Dedup. Per LINE docs (https://developers.line.biz/en/reference/messaging-api/#webhook-event-objects)
@@ -614,8 +625,9 @@ export async function handleSessionsHistory(
 # In production these are set via `wrangler secret put <NAME>`.
 # Never commit real secrets. Placeholders use the *_HERE suffix per ShopBack security policy.
 
-# --- LINE webhook verification ---
+# --- LINE webhook verification + blocked-user reply ---
 LINE_CHANNEL_SECRET=YOUR_LINE_CHANNEL_SECRET_HERE
+LINE_CHANNEL_ACCESS_TOKEN=YOUR_LINE_CHANNEL_ACCESS_TOKEN_HERE
 # Comma-separated LINE userIds. During bootstrap only, may temporarily be `*`.
 LINE_ALLOWED_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx,Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
 

@@ -41,7 +41,7 @@ In the [LINE Developers Console](https://developers.line.biz/console/):
    - Note the **Channel secret** → store as Northflank secret `LINE_CHANNEL_SECRET` (consumed by `openab-gateway`) and Cloudflare Worker secret `LINE_CHANNEL_SECRET` (consumed by the Worker's fast-fail HMAC pre-check).
 6. Under **Messaging API settings** → **Channel access token**:
    - Issue a long-lived **channel access token** (or use the rotated short-lived one if you'll run a refresh job). For v1, long-lived is fine.
-   - Store as Northflank secret `LINE_CHANNEL_ACCESS_TOKEN`. This is consumed by **both** `openab-gateway` (for its Reply/Push API calls) and the agent process itself via OpenAB's `[agent].env` (for `send-line-image.sh`).
+   - Store as Northflank secret `LINE_CHANNEL_ACCESS_TOKEN`. This is consumed by **three** components: `openab-gateway` (for its Reply/Push API calls), the agent process itself via OpenAB's `[agent].env` (for `send-line-image.sh`), and the **Cloudflare Worker** (for replying to non-allowlisted users with a service-unavailable message). Set it via `wrangler secret put LINE_CHANNEL_ACCESS_TOKEN`.
 
 **Rationale:** Auto-reply and greeting messages confuse users when there's a real bot behind it. Disable both. Same secret reaches three consumers (Worker, gateway, agent); rotating it means rotating all three at once.
 
@@ -151,7 +151,7 @@ If we exceed: upgrade to the LINE "Light" plan (~5,000 msg/mo) or implement aggr
 
 1. **Webhook verification:** click "Verify" in LINE Console → expect `Success`. Worker logs show a verify-event.
 2. **Bootstrap allowlist:** with allowlist temporarily wildcarded, message the bot from each invited LINE account. Collect all `source.userId` values from Worker logs. Lock the allowlist.
-3. **Reject non-allowlisted users:** message from a fresh LINE account → expect no reply, Worker log shows "dropped".
+3. **Reject non-allowlisted users:** message from a fresh LINE account → expect a reply: "This service is currently unavailable. A team member will assist you shortly." Worker log shows "blocked users" with the userId.
 4. **Text reply round-trip:** send `ping` → expect a Gemini-generated reply within ~5s.
 5. **Image reply round-trip:** send `screenshot https://example.com` → expect an image message with the rendered homepage.
 6. **`replyToken` expiry:** send a deliberately slow request (e.g., "fetch and summarize this 50-page PDF") → expect the bot to switch to `pushMessage` after 25s and the user still receives the reply.

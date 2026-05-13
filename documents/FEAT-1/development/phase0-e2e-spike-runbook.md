@@ -50,6 +50,7 @@ wrangler kv:namespace create IMG_KV --preview
 
 # Set production secrets (one per command, prompted for value).
 wrangler secret put LINE_CHANNEL_SECRET
+wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 wrangler secret put LINE_ALLOWED_USER_IDS
 wrangler secret put CF_UPLOAD_SECRET
 wrangler secret put DASHBOARD_INGEST_TOKEN
