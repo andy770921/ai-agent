@@ -5,3 +5,4 @@ local-sessions/
 local-logs/
 node_modules/
 .DS_Store
+scripts/lib/*.test.js

@@ -35,12 +35,17 @@ npm run lint                         # eslint across all workspaces
 
 **Run a single Worker test:**
 ```bash
-cd edge && npx vitest run test/lineWebhook.test.ts
+cd edge && npx vitest run test/line/webhookHandler.test.ts
 ```
 
 **Frontend tests (Jest):**
 ```bash
 cd frontend && npx jest src/path/to/file.spec.ts
+```
+
+**Sidecar tests (Node built-in runner):**
+```bash
+cd agent-runtime && node --test scripts/lib/
 ```
 
 **Build the dashboard for Cloudflare Pages:**
@@ -64,10 +69,10 @@ npm run build:pages --workspace=frontend
    userId's session. Gemini uses Playwright MCP / GitHub MCP as needed.
 5. The agent's text reply travels back the same path; the gateway uses LINE
    Reply API while the `replyToken` is fresh and falls back to Push API.
-6. Image replies bypass the gateway: the agent runs `post-screenshot.sh`
-   (uploads to the KV image store via the Worker) and `send-line-image.sh` (POSTs LINE Push
-   API directly using the `LINE_CHANNEL_ACCESS_TOKEN` exposed via
-   `openab.toml` `[agent].env`).
+6. Image replies bypass the gateway: the agent runs `deliver-line-image.sh`,
+   which uploads to the KV image store via the Worker then POSTs the resulting
+   URL to LINE Push API directly using the `LINE_CHANNEL_ACCESS_TOKEN` exposed
+   via `openab.toml` `[agent].env`. One operation, one status.
 
 ### Dashboard event flow
 
@@ -144,14 +149,42 @@ five upstream truths that override the PRD where they disagree:
 Work is tracked in `documents/[TICKET-NUMBER]/`:
 
 ```
-documents/FEAT-1/
-├── plans/        # PRDs, design decisions
-└── development/  # Per-component implementation docs + upstream-findings + e2e runbook
+documents/FEAT-1/    # original LINE agent build
+documents/FEAT-2/    # HF Spaces migration
+documents/FEAT-3/    # MCP env / Langfuse follow-ups
+documents/FIX-1/     # one-off fixes
+documents/REFACTOR-1/  # deep-modules refactor (Worker + sidecar + frontend SSE)
 
-documents/FEAT-2/
-├── plans/        # HF Spaces migration PRD
-└── development/  # Migration implementation guide
+Each folder has:
+  plans/             # PRDs, design decisions, RFCs
+  development/       # Step-by-step implementation guides
 ```
+
+`FEAT-*` = new product/feature work. `FIX-*` = bug fixes. `REFACTOR-*` =
+internal restructure with no user-visible behavior change.
+
+## Internal module organization (REFACTOR-1)
+
+Deep modules are grouped under subfolders so the ports are obvious at a
+glance:
+
+- `edge/src/line/` — LINE webhook ports (`signatureVerifier`,
+  `webhookDedupStore`, `gatewayForwarder`, `blockedUserReplier`) + the
+  `webhookHandler` factory that composes them.
+- `edge/src/ports/` — outbound adapters (`sidecarClient`, `imageStore`).
+- `edge/src/router.ts` — tiny path/method/CORS router used by `index.ts`.
+- `agent-runtime/scripts/lib/` — sidecar bus + sinks (`agentEventBus`,
+  `ringBufferSink`, `sseFanoutSink`, `langfuseSink`, `jsonLineDecoder`).
+- `frontend/src/lib/sse/` — `parseSseStream` (pure) +
+  `reconnectingSseStream` (reconnect/heartbeat loop) consumed by
+  `hooks/useEventStream`.
+
+When adding a new outbound dependency: add a port under
+`edge/src/ports/`. When adding a new observer to the sidecar event stream:
+add a sink under `agent-runtime/scripts/lib/` and register it in
+`healthz.js`. See `documents/REFACTOR-1/plans/prd.md` for the design
+rationale and `development/deep-modules-implementation.md` for the build
+order.
 
 ## Custom slash commands
 

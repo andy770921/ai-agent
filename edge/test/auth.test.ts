@@ -9,6 +9,7 @@ const envFixture: Env = {
   SIDECAR_BASE_URL: 'https://sc',
   DASHBOARD_ORIGIN: 'https://dash',
   LINE_CHANNEL_SECRET: 'secret',
+  LINE_CHANNEL_ACCESS_TOKEN: 'tok',
   LINE_ALLOWED_USER_IDS: '',
   CF_UPLOAD_SECRET: 'cf',
   DASHBOARD_INGEST_TOKEN: 'ingest',

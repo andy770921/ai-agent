@@ -1,190 +1,24 @@
 import { isAllowedUser } from './allowlist';
 import type { Env } from './env';
-
-interface LineEvent {
-  type?: string;
-  replyToken?: string;
-  webhookEventId?: string;
-  deliveryContext?: { isRedelivery?: boolean };
-  source?: { userId?: string };
-}
-
-interface LinePayload {
-  events?: LineEvent[];
-}
+import { createLineReplyBlockedUserReplier } from './line/blockedUserReplier';
+import { createHttpGatewayForwarder } from './line/gatewayForwarder';
+import { createHmacSignatureVerifier } from './line/signatureVerifier';
+import { createLineWebhookHandler } from './line/webhookHandler';
+import { createKvWebhookDedupStore } from './line/webhookDedupStore';
 
 const DEDUP_TTL_SECONDS = 600;
 
-export async function handleLineWebhook(
+export function handleLineWebhook(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  const sig = req.headers.get('X-Line-Signature');
-  if (!sig) return new Response('missing sig', { status: 401 });
-
-  const rawBody = await req.text();
-  const expected = await hmacSha256Base64(env.LINE_CHANNEL_SECRET, rawBody);
-  if (!constantTimeEqual(sig, expected)) {
-    return new Response('bad sig', { status: 401 });
-  }
-
-  let payload: LinePayload;
-  try {
-    payload = JSON.parse(rawBody) as LinePayload;
-  } catch {
-    return new Response('bad json', { status: 400 });
-  }
-
-  const inboundEvents = payload.events ?? [];
-  console.log('webhook received', {
-    eventCount: inboundEvents.length,
-    userIds: inboundEvents.map((e) => e.source?.userId),
-    allowlistLength: env.LINE_ALLOWED_USER_IDS?.length,
+  const handler = createLineWebhookHandler({
+    verifier: createHmacSignatureVerifier(env.LINE_CHANNEL_SECRET),
+    dedup: createKvWebhookDedupStore(env.WEBHOOK_DEDUP, DEDUP_TTL_SECONDS),
+    forwarder: createHttpGatewayForwarder(env.GATEWAY_BASE_URL),
+    blockedReplier: createLineReplyBlockedUserReplier(env.LINE_CHANNEL_ACCESS_TOKEN),
+    isUserAllowed: (id) => isAllowedUser(id, env.LINE_ALLOWED_USER_IDS),
   });
-
-  // 1. Allowlist filter (edge fast-fail; gateway re-applies its own allowlist).
-  const allowedEvents: LineEvent[] = [];
-  const blockedEvents: LineEvent[] = [];
-  for (const e of inboundEvents) {
-    if (isAllowedUser(e.source?.userId, env.LINE_ALLOWED_USER_IDS)) {
-      allowedEvents.push(e);
-    } else {
-      blockedEvents.push(e);
-    }
-  }
-
-  if (blockedEvents.length > 0) {
-    console.log(
-      'blocked users',
-      blockedEvents.map((e) => e.source?.userId),
-    );
-    ctx.waitUntil(replyToBlockedUsers(env, blockedEvents));
-  }
-
-  if (allowedEvents.length === 0) {
-    console.log('all events blocked by allowlist');
-    return new Response('ok', { status: 200 });
-  }
-
-  // 2. Dedup against webhookEventId — skip events already seen.
-  const eventsToForward: LineEvent[] = [];
-  for (const ev of allowedEvents) {
-    if (!ev.webhookEventId) {
-      eventsToForward.push(ev);
-      continue;
-    }
-    const key = `evt:${ev.webhookEventId}`;
-    const seen = await env.WEBHOOK_DEDUP.get(key);
-    if (seen || ev.deliveryContext?.isRedelivery) {
-      console.log('dedup skip', ev.webhookEventId);
-      continue;
-    }
-    await env.WEBHOOK_DEDUP.put(key, 'processing', { expirationTtl: DEDUP_TTL_SECONDS });
-    eventsToForward.push(ev);
-  }
-  if (eventsToForward.length === 0) return new Response('ok', { status: 200 });
-
-  // 3. Forward rawBody unchanged to the gateway so its HMAC re-verification
-  // succeeds. The gateway has its own allowlist (openab.toml [gateway].allowed_users)
-  // which will filter the same events again — that's intentional.
-  const idempotencyKey = eventsToForward.map((e) => e.webhookEventId ?? 'noid').join(',');
-
-  ctx.waitUntil(
-    (async () => {
-      try {
-        const r = await fetch(`${env.GATEWAY_BASE_URL}/webhook/line`, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'X-Line-Signature': sig,
-            'idempotency-key': idempotencyKey,
-          },
-          body: rawBody,
-        });
-        console.log('forward result', { status: r.status });
-        if (!r.ok) {
-          await markFailed(env, eventsToForward, `upstream ${r.status}`);
-        } else {
-          await markDelivered(env, eventsToForward);
-        }
-      } catch (err) {
-        await markFailed(env, eventsToForward, String(err));
-      }
-    })(),
-  );
-
-  return new Response('ok', { status: 200 });
-}
-
-async function replyToBlockedUsers(env: Env, events: LineEvent[]): Promise<void> {
-  for (const ev of events) {
-    if (!ev.replyToken || ev.type === 'follow' || ev.type === 'unfollow') continue;
-    try {
-      await fetch('https://api.line.me/v2/bot/message/reply', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`,
-        },
-        body: JSON.stringify({
-          replyToken: ev.replyToken,
-          messages: [
-            {
-              type: 'text',
-              text: 'This service is currently unavailable. A team member will assist you shortly.',
-            },
-          ],
-        }),
-      });
-    } catch (err) {
-      console.error('reply to blocked user failed', err);
-    }
-  }
-}
-
-async function markDelivered(env: Env, events: LineEvent[]): Promise<void> {
-  await Promise.all(
-    events
-      .filter((e) => e.webhookEventId)
-      .map((e) =>
-        env.WEBHOOK_DEDUP.put(`evt:${e.webhookEventId}`, 'delivered', {
-          expirationTtl: DEDUP_TTL_SECONDS,
-        }),
-      ),
-  );
-}
-
-async function markFailed(env: Env, events: LineEvent[], reason: string): Promise<void> {
-  // Leave failed events as `processing` in KV — they'll TTL out naturally.
-  // A LINE re-delivery carries the same webhookEventId; we skip those by default.
-  // To explicitly allow replay after a known upstream outage, run:
-  //   wrangler kv:key delete --binding=WEBHOOK_DEDUP evt:<id>
-  console.error(
-    'forward failed',
-    reason,
-    events.map((e) => e.webhookEventId),
-  );
-}
-
-async function hmacSha256Base64(secret: string, body: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
-  let bin = '';
-  const view = new Uint8Array(sig);
-  for (let i = 0; i < view.length; i++) bin += String.fromCharCode(view[i]!);
-  return btoa(bin);
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
+  return handler(req, ctx);
 }

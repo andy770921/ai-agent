@@ -5,55 +5,92 @@ import { handleImageServe } from './imageServe';
 import { handleSessionsStream } from './dashboardSse';
 import { handleSessionsList, handleSessionsHistory } from './dashboardRest';
 import { requireDashboardToken } from './auth';
-import { corsHeaders, handlePreflight } from './cors';
+import { corsHeaders } from './cors';
+import { createHttpSidecarClient } from './ports/sidecarClient';
+import { createKvImageStore } from './ports/imageStore';
+import { createRouter, type RouteHandler } from './router';
 
 export type { Env };
 
-export default {
-  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(req.url);
+const IMAGE_TTL_SECONDS = 86400;
 
-    if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
-      return handlePreflight(env);
-    }
-
-    if (req.method === 'POST' && url.pathname === '/line/webhook') {
-      return handleLineWebhook(req, env, ctx);
-    }
-
-    if (req.method === 'PUT' && url.pathname.startsWith('/img/')) {
-      return handleImageUpload(req, env, url.pathname.slice(5));
-    }
-    if (req.method === 'GET' && url.pathname.startsWith('/img/')) {
-      return handleImageServe(req, env, url.pathname.slice(5));
-    }
-
-    if (url.pathname.startsWith('/api/')) {
-      const authErr = requireDashboardToken(req, env);
-      if (authErr) return withCors(authErr, env);
-
-      let response: Response;
-      if (req.method === 'GET' && url.pathname === '/api/sessions/stream') {
-        response = await handleSessionsStream(req, env, ctx);
-      } else if (req.method === 'GET' && url.pathname === '/api/sessions') {
-        response = await handleSessionsList(req, env);
-      } else {
-        const m = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/);
-        if (req.method === 'GET' && m) {
-          response = await handleSessionsHistory(req, env, decodeURIComponent(m[1]!));
-        } else {
-          return withCors(new Response('not found', { status: 404 }), env);
-        }
-      }
-      return withCors(response, env);
-    }
-
-    return new Response('not found', { status: 404 });
-  },
-};
-
-function withCors(response: Response, env: Env): Response {
-  const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(corsHeaders(env))) headers.set(k, v);
-  return new Response(response.body, { status: response.status, headers });
+function dashboardRoute(
+  inner: (
+    req: Request,
+    env: Env,
+    ctx: ExecutionContext,
+    params: Record<string, string>,
+  ) => Promise<Response>,
+): RouteHandler<Env> {
+  return async (req, env, ctx, params) => {
+    const authErr = requireDashboardToken(req, env);
+    if (authErr) return authErr;
+    return inner(req, env, ctx, params);
+  };
 }
+
+const router = createRouter<Env>(
+  [
+    {
+      method: 'POST',
+      pattern: '/line/webhook',
+      handler: (req, env, ctx) => handleLineWebhook(req, env, ctx),
+    },
+    {
+      method: 'PUT',
+      pattern: '/img/:key',
+      handler: (req, env, _ctx, params) =>
+        handleImageUpload(
+          req,
+          createKvImageStore(env.IMG_KV, IMAGE_TTL_SECONDS),
+          env.CF_UPLOAD_SECRET,
+          params.key!,
+        ),
+    },
+    {
+      method: 'GET',
+      pattern: '/img/:key',
+      handler: (req, env, _ctx, params) =>
+        handleImageServe(req, createKvImageStore(env.IMG_KV, IMAGE_TTL_SECONDS), params.key!),
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions/stream',
+      cors: true,
+      handler: dashboardRoute((req, env) =>
+        handleSessionsStream(
+          req,
+          createHttpSidecarClient(env.SIDECAR_BASE_URL, env.DASHBOARD_INGEST_TOKEN),
+        ),
+      ),
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions',
+      cors: true,
+      handler: dashboardRoute((req, env) =>
+        handleSessionsList(
+          req,
+          createHttpSidecarClient(env.SIDECAR_BASE_URL, env.DASHBOARD_INGEST_TOKEN),
+        ),
+      ),
+    },
+    {
+      method: 'GET',
+      pattern: '/api/sessions/:userId/history',
+      cors: true,
+      handler: dashboardRoute((req, env, _ctx, params) =>
+        handleSessionsHistory(
+          req,
+          createHttpSidecarClient(env.SIDECAR_BASE_URL, env.DASHBOARD_INGEST_TOKEN),
+          params.userId!,
+        ),
+      ),
+    },
+  ],
+  { corsHeaders, corsPathPrefixes: ['/api/'] },
+);
+
+export default {
+  fetch: router.fetch,
+};

@@ -28,13 +28,12 @@ Whenever you need to push a LINE image (or any out-of-band content), use
 # Tools
 - For browser tasks (screenshot, fetch a page, click something): use the `playwright` MCP tools.
 - For GitHub tasks (read repo, summarize PR, comment on PR): use the `github` MCP tools.
-- To send a LINE image back to the user, do this two-step exactly:
-    1. /usr/local/bin/post-screenshot.sh <local-png-path>
-       This prints a public HTTPS URL like https://<worker>.workers.dev/img/<uuid>.png.
-    2. /usr/local/bin/send-line-image.sh <sender_id> <url-from-step-1>
-       This POSTs a LINE Push API image message to that user.
-  After both steps succeed, your text reply should be a short confirmation
-  (e.g. "Screenshot above ⤴"). Do not paste the URL or the userId into the
+- To send a LINE image back to the user, run exactly:
+    /usr/local/bin/deliver-line-image.sh <sender_id> <local-png-path>
+  This uploads the image and pushes it to the user in one step; on success
+  it prints a JSON line like `{"ok":true,"imageUrl":"…"}`. After it
+  succeeds, your text reply should be a short confirmation (e.g.
+  "Screenshot above ⤴"). Do not paste the URL or the userId into the
   text reply — only the image goes via the Push API; the text goes via the
   normal OpenAB reply channel.
 
@@ -42,5 +41,5 @@ Whenever you need to push a LINE image (or any out-of-band content), use
 - You CANNOT push to default branches (main/master). Do not even attempt; the
   GitHub PAT lacks permission and you will only frustrate the user.
 - You CANNOT install software, modify the host filesystem, or execute shell
-  outside `/usr/local/bin/post-screenshot.sh` and `/usr/local/bin/send-line-image.sh`.
+  outside `/usr/local/bin/deliver-line-image.sh`.
 - When in doubt, ask the user a clarifying question rather than guessing.

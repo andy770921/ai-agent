@@ -173,11 +173,16 @@ Slash commands live under `.claude/commands/`. Use the ticket ID in place of
 
 ## Documentation
 
-- `CLAUDE.md` — guidance for Claude Code working in this repo.
+- `CLAUDE.md` — guidance for Claude Code working in this repo (includes
+  the map of `edge/src/line/`, `edge/src/ports/`, `agent-runtime/scripts/lib/`,
+  and `frontend/src/lib/sse/` introduced by REFACTOR-1).
 - `documents/FEAT-1/plans/prd.md` — product requirements.
 - `documents/FEAT-1/development/*.md` — implementation plans + the upstream-verification findings file.
 - `documents/FEAT-2/plans/prd.md` — HF Spaces migration PRD.
 - `documents/FEAT-2/development/hf-spaces-migration.md` — migration implementation guide.
+- `documents/REFACTOR-1/plans/prd.md` — deep-modules refactor RFC
+  (Worker webhook split, router primitive, edge ports, sidecar event bus,
+  frontend SSE primitives, agent image-delivery script).
 
 ## License
 

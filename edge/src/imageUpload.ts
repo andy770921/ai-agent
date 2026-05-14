@@ -1,15 +1,14 @@
-import type { Env } from './env';
+import type { ImageStore } from './ports/imageStore';
 
 const KEY_RE = /^[a-zA-Z0-9._-]+\.(png|jpg|jpeg)$/;
-const TTL_SECONDS = 86400; // 24h, matches the lifecycle window the dashboard expects
 
 export async function handleImageUpload(
   req: Request,
-  env: Env,
+  store: ImageStore,
+  uploadSecret: string,
   key: string,
 ): Promise<Response> {
-  const auth = req.headers.get('authorization');
-  if (auth !== `Bearer ${env.CF_UPLOAD_SECRET}`) {
+  if (req.headers.get('authorization') !== `Bearer ${uploadSecret}`) {
     return new Response('unauthorized', { status: 401 });
   }
   if (!KEY_RE.test(key)) {
@@ -19,17 +18,12 @@ export async function handleImageUpload(
   if (!contentType.startsWith('image/')) {
     return new Response('bad content-type', { status: 400 });
   }
-
   if (!req.body) return new Response('no body', { status: 400 });
-  // Read the full body into an ArrayBuffer — KV.put requires a concrete value,
-  // not a stream. A screenshot is typically 100KB-1MB; the 25MB hard cap on
-  // KV values is far above the worst-case Playwright PNG.
-  const bytes = await req.arrayBuffer();
 
-  await env.IMG_KV.put(key, bytes, {
-    expirationTtl: TTL_SECONDS,
-    metadata: { contentType },
-  });
+  // Read the full body — KV.put requires a concrete value, not a stream.
+  // Worst case is a Playwright PNG well under KV's 25MB limit.
+  const bytes = await req.arrayBuffer();
+  await store.put(key, bytes, contentType);
 
   return new Response(JSON.stringify({ key }), {
     status: 201,

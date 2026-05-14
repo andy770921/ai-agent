@@ -1,24 +1,17 @@
-import type { Env } from './env';
-
-interface ImageMeta {
-  contentType?: string;
-}
+import type { ImageStore } from './ports/imageStore';
 
 export async function handleImageServe(
   _req: Request,
-  env: Env,
+  store: ImageStore,
   key: string,
 ): Promise<Response> {
-  const { value, metadata } = await env.IMG_KV.getWithMetadata<ImageMeta>(
-    key,
-    'arrayBuffer',
-  );
-  if (!value) {
+  const found = await store.get(key);
+  if (!found) {
     return new Response('not found', { status: 404 });
   }
-  return new Response(value, {
+  return new Response(found.body, {
     headers: {
-      'content-type': metadata?.contentType ?? 'image/png',
+      'content-type': found.contentType,
       'cache-control': 'public, max-age=86400',
     },
   });

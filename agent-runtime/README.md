@@ -34,8 +34,7 @@ curl http://localhost:8081/healthz   # sidecar
 - `scripts/healthz.js` — Node sidecar: `/healthz`, `/events/stream`, `/sessions`.
 - `scripts/events-emitter.js` — tails `$GEMINI_TELEMETRY_OUTFILE`, reshapes to `AgentEvent`.
 - `scripts/hf-proxy.js` — reverse proxy consolidating `:8080`+`:8081` → `:7860` for HF Spaces.
-- `scripts/post-screenshot.sh` — uploads PNG to the Cloudflare Worker `/img` endpoint.
-- `scripts/send-line-image.sh` — POSTs a LINE image-message via Push API.
+- `scripts/deliver-line-image.sh` — uploads PNG to the Cloudflare Worker `/img` endpoint, then sends a LINE Push image-message in one step.
 - `hf-README.md` — HF Space metadata (synced as `README.md` to the Space repo).
 
 ## Phase 0.3 first

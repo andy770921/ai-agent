@@ -30,7 +30,7 @@ RUN cargo build --release --manifest-path gateway/Cargo.toml --bin openab-gatewa
 FROM node:22-bookworm-slim
 
 # Runtime deps:
-# - ca-certificates, curl  — HTTPS + post-screenshot.sh / send-line-image.sh
+# - ca-certificates, curl  — HTTPS + deliver-line-image.sh
 # - procps, tini           — process supervision
 # - ripgrep                — used by Gemini CLI's file search
 # - gettext-base           — envsubst for render-config.sh
@@ -96,13 +96,12 @@ COPY scripts/render-mcp-config.sh /usr/local/bin/render-mcp-config.sh
 COPY scripts/healthz.js           /usr/local/bin/healthz.js
 COPY scripts/events-emitter.js    /usr/local/bin/events-emitter.js
 COPY scripts/hf-proxy.js          /usr/local/bin/hf-proxy.js
-COPY scripts/post-screenshot.sh   /usr/local/bin/post-screenshot.sh
-COPY scripts/send-line-image.sh   /usr/local/bin/send-line-image.sh
+COPY scripts/lib/                 /usr/local/bin/lib/
+COPY scripts/deliver-line-image.sh /usr/local/bin/deliver-line-image.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
              /usr/local/bin/render-config.sh \
              /usr/local/bin/render-mcp-config.sh \
-             /usr/local/bin/post-screenshot.sh \
-             /usr/local/bin/send-line-image.sh
+             /usr/local/bin/deliver-line-image.sh
 
 # --- Runtime contract ---
 ENV NODE_ENV=production \
