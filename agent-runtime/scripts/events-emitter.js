@@ -1,24 +1,30 @@
 // events-emitter.js — emits one AgentEvent JSON per stdout line.
 //
-// Source: Gemini CLI's $GEMINI_TELEMETRY_OUTFILE. Gemini CLI writes JSON-line
-// telemetry events to this file when GEMINI_TELEMETRY_ENABLED=true and
-// GEMINI_TELEMETRY_TARGET=local (per bundle/docs/cli/acp-mode.md, v0.41.x).
+// Source: Gemini CLI's $GEMINI_TELEMETRY_OUTFILE. Gemini CLI v0.41.x writes
+// telemetry as pretty-printed OpenTelemetry LogRecordImpl JSON objects,
+// concatenated in the file. Each record looks like:
 //
-// Gemini CLI telemetry JSONL format (v0.41.x):
-//   {"timestamp":"ISO8601","name":"gemini_cli.<event>","attributes":{"session.id":"...","field":"value"},"resource":{...}}
+//   {
+//     "hrTime": [<seconds>, <nanoseconds>],
+//     "attributes": { "session.id": "...", ... },
+//     "_eventName": "gemini_cli.user_prompt",
+//     ...
+//   }
+//
+// The file is NOT JSONL — each object spans ~40+ lines. We use a brace-depth
+// streaming parser to reassemble complete JSON objects from the byte stream.
+//
 // See: https://geminicli.com/docs/cli/telemetry/
 //
 // Mapped events:
-//   gemini_cli.user_prompt  → message_in
-//   gemini_cli.tool_call    → tool_call + tool_result (single event carries both)
-//   gemini_cli.conversation_finished → message_out (no response text available)
-//   gemini_cli.api_response → (logged for debug, not mapped to AgentEvent)
+//   gemini_cli.user_prompt           → message_in
+//   gemini_cli.tool_call             → tool_call + tool_result
+//   gemini_cli.conversation_finished → message_out
+//   gemini_cli.api_response          → (logged, not mapped)
 
 const fs = require('node:fs');
-const readline = require('node:readline');
 
-const SRC = process.env.GEMINI_TELEMETRY_OUTFILE
-  || '/var/log/openab/gemini-events.jsonl';
+const SRC = process.env.GEMINI_TELEMETRY_OUTFILE || '/var/log/openab/gemini-events.jsonl';
 
 // LRU-cap so a long-running pod with many sessions doesn't leak.
 const SESSION_MAP_LIMIT = 200;
@@ -33,67 +39,115 @@ function rememberSession(sid, userId) {
   }
 }
 
-// Offset we've consumed so far. On file truncation (size < lastOffset) we
-// reset to 0 and re-tail from the new beginning. On file deletion + recreation
-// (rename / logrotate copytruncate) we re-poll until the path exists again.
-let lastOffset = 0;
-let stream = null;
-let rl = null;
+// === Brace-depth streaming JSON parser ======================================
+// Tracks { } depth to delimit individual JSON objects in a pretty-printed
+// file. Handles strings (with escapes) correctly so braces inside strings
+// don't confuse the parser.
 
-function cleanup() {
-  try { rl?.close(); } catch { /* ignore */ }
-  try { stream?.destroy(); } catch { /* ignore */ }
-  rl = null;
-  stream = null;
+let jsonBuf = '';
+let depth = 0;
+let inString = false;
+let escape = false;
+
+function pushChunk(chunk) {
+  for (const ch of chunk) {
+    if (depth === 0 && ch !== '{') continue; // skip inter-object whitespace
+    jsonBuf += ch;
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') depth++;
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        processJsonObject(jsonBuf);
+        jsonBuf = '';
+      }
+    }
+  }
 }
 
-// Log the first N raw file lines (before JSON parsing) so we can discover
-// the actual Gemini CLI telemetry file format.
-let rawLinesSampled = 0;
-const RAW_LINE_LIMIT = 20;
+// Log the first N complete records for format discovery.
+let recordsSampled = 0;
+const RECORD_SAMPLE_LIMIT = 3;
+
+function processJsonObject(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return; // skip malformed
+  }
+
+  if (recordsSampled < RECORD_SAMPLE_LIMIT) {
+    recordsSampled++;
+    // Log a compact preview (keys + eventName) — not the full object
+    const preview = {
+      _eventName: raw._eventName,
+      eventName: raw.eventName,
+      attrKeys: raw.attributes ? Object.keys(raw.attributes) : [],
+      hrTime: raw.hrTime,
+    };
+    console.error(`events-emitter: record[${recordsSampled}] ${JSON.stringify(preview)}`);
+  }
+
+  const result = reshape(raw);
+  if (!result) return;
+  const events = Array.isArray(result) ? result : [result];
+  for (const ev of events) {
+    process.stdout.write(JSON.stringify(ev) + '\n');
+  }
+}
+
+// === File tailing ===========================================================
+let lastOffset = 0;
+let stream = null;
+
+function cleanup() {
+  try {
+    stream?.destroy();
+  } catch {
+    /* ignore */
+  }
+  stream = null;
+}
 
 function openTail(start) {
   cleanup();
   stream = fs.createReadStream(SRC, { encoding: 'utf8', start });
-  rl = readline.createInterface({ input: stream });
-  rl.on('line', (line) => {
-    if (rawLinesSampled < RAW_LINE_LIMIT) {
-      rawLinesSampled++;
-      console.error(`events-emitter: line[${rawLinesSampled}] ${line.slice(0, 300)}`);
-    }
-    try {
-      const raw = JSON.parse(line);
-      if (typeof raw !== 'object' || raw === null) return; // skip primitives
-      const result = reshape(raw);
-      if (!result) return;
-      const events = Array.isArray(result) ? result : [result];
-      for (const ev of events) {
-        process.stdout.write(JSON.stringify(ev) + '\n');
-      }
-    } catch {
-      // Skip non-JSON lines silently.
-    }
-  });
-  stream.on('end', () => {
-    // EOF — schedule a poll for new bytes.
-    setTimeout(pollAndResume, 250);
-  });
-  stream.on('error', () => {
-    setTimeout(tail, 1000);
-  });
+  stream.on('data', pushChunk);
+  stream.on('end', () => setTimeout(pollAndResume, 250));
+  stream.on('error', () => setTimeout(tail, 1000));
 }
 
 function pollAndResume() {
   let stat;
-  try { stat = fs.statSync(SRC); } catch {
-    // File disappeared (rotate via rename). Re-poll until it returns.
+  try {
+    stat = fs.statSync(SRC);
+  } catch {
     cleanup();
     setTimeout(tail, 500);
     return;
   }
   if (stat.size < lastOffset) {
-    // Truncated (logrotate copytruncate). Re-read from byte 0.
+    // Truncated — reset parser state and re-read from 0.
     lastOffset = 0;
+    jsonBuf = '';
+    depth = 0;
+    inString = false;
+    escape = false;
     openTail(0);
     return;
   }
@@ -102,7 +156,6 @@ function pollAndResume() {
     lastOffset = stat.size;
     return;
   }
-  // No new bytes; keep polling.
   setTimeout(pollAndResume, 500);
 }
 
@@ -115,30 +168,31 @@ function tail() {
   openTail(lastOffset);
 }
 
-// Log each unrecognized event name once so we can refine the mapping.
+// === Event reshape ===========================================================
 const seenUnrecognized = new Set();
 
 function reshape(raw) {
-  const ts = raw.timestamp || raw.ts || new Date().toISOString();
+  // Convert hrTime [seconds, nanoseconds] to ISO timestamp.
+  const ts = raw.hrTime
+    ? new Date(raw.hrTime[0] * 1000 + raw.hrTime[1] / 1e6).toISOString()
+    : raw.timestamp || new Date().toISOString();
+
   const attrs = raw.attributes || {};
 
-  // Gemini CLI uses attributes["session.id"] for the session identifier.
+  // Event name: _eventName (private backing field) or eventName (getter).
+  const eventName = raw._eventName || raw.eventName || raw.name;
+
+  // Session ID from attributes.
   const sid = attrs['session.id'] || raw.session_id;
 
-  // Event name: Gemini CLI v0.41.x uses raw.name (e.g. "gemini_cli.user_prompt").
-  const eventName = raw.name || raw.event || raw.type;
-
-  // Try to extract LINE userId from prompt's <sender_context> block (OpenAB
-  // injects this). Cache against the Gemini session_id for subsequent events.
+  // Try to extract LINE userId from prompt's <sender_context> block.
   const prompt = attrs.prompt || raw.prompt;
   if (prompt && sid) {
     const m = String(prompt).match(/"sender_id"\s*:\s*"([^"]+)"/);
     if (m) rememberSession(sid, m[1]);
   }
 
-  // Fallback: if sender_id extraction failed, use session_id itself as the
-  // user identifier. In our system each LINE user gets one Gemini session,
-  // so session_id is unique per user.
+  // Fallback: use session_id as user identifier (one session per LINE user).
   let sessionUserId = sid ? recentSession.get(sid) : undefined;
   if (!sessionUserId && sid) {
     rememberSession(sid, sid);
@@ -148,7 +202,6 @@ function reshape(raw) {
 
   switch (eventName) {
     case 'gemini_cli.user_prompt':
-    case 'prompt_received': // legacy fallback
       return {
         type: 'message_in',
         sessionUserId,
@@ -156,14 +209,11 @@ function reshape(raw) {
         text: String(prompt ?? ''),
       };
 
-    case 'gemini_cli.tool_call':
-    case 'tool_call': { // legacy fallback
-      const toolName = String(attrs.function_name || raw.tool_name || 'unknown');
-      const toolArgs = attrs.function_args || raw.tool_args || raw.args || null;
-      const durationMs = Number(attrs.duration_ms || raw.duration_ms || 0);
-      const ok = attrs.success ?? raw.ok ?? true;
-      // Emit both tool_call and tool_result since Gemini CLI's single event
-      // carries input args, duration, and success/failure.
+    case 'gemini_cli.tool_call': {
+      const toolName = String(attrs.function_name || 'unknown');
+      const toolArgs = attrs.function_args || null;
+      const durationMs = Number(attrs.duration_ms || 0);
+      const ok = attrs.success ?? true;
       return [
         { type: 'tool_call', sessionUserId, ts, tool: toolName, args: toolArgs },
         {
@@ -179,12 +229,11 @@ function reshape(raw) {
     }
 
     case 'gemini_cli.conversation_finished':
-    case 'response_sent': // legacy fallback
       return {
         type: 'message_out',
         sessionUserId,
         ts,
-        text: String(attrs.text || raw.text || ''),
+        text: String(attrs.text || ''),
         kind: 'text',
       };
 

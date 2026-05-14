@@ -203,19 +203,10 @@ switch.
 ## Bug 8 (MCP): `sandboxNetworkAccess: false` blocks MCP server network
 
 **Symptom:** After fixing env expansion (Bug 1) and adding `trust: true`
-(Bug 6), GitHub MCP tools are STILL not available. Agent falls back to
-web_search. Container logs show no MCP-related errors.
+(Bug 6), GitHub MCP tools are STILL not available.
 
-**Root cause:**
-
-`gemini/settings.json` has `toolSandboxing: true` + `sandboxNetworkAccess:
-false`. Gemini CLI v0.41.2 may sandbox MCP server subprocesses. With
-network access disabled, `github-mcp-server` cannot reach `api.github.com`
-— the server starts, fails to authenticate or list tools, and silently
-disconnects. The model never sees GitHub tools.
-
-**Fix:** Change `sandboxNetworkAccess` to `true` in `gemini/settings.json`.
-MCP servers need network access to reach external APIs.
+**Fix:** Changed `sandboxNetworkAccess` to `true`. However, this alone did
+not fix the issue — see Bug 10.
 
 ---
 
@@ -260,16 +251,83 @@ logs will reveal the exact file structure needed to write a correct parser.
 
 ---
 
+## Bug 10 (MCP — ROOT CAUSE): Missing workspace trust in headless ACP mode
+
+**Symptom:** After all previous MCP fixes (env expansion, trust, sandbox
+network), GitHub MCP tools are STILL not available. Agent always falls
+back to web_search (~230s timeout). Zero MCP-related error messages.
+
+**Root cause:**
+
+Gemini CLI v0.41.2 silently skips MCP servers in **untrusted workspaces**.
+Since v0.39.1, headless/ACP mode does not auto-trust workspaces (security
+fix for a CVSS-10 RCE vulnerability). In untrusted mode:
+
+- MCP servers are **never started** (silently disconnected)
+- Workspace-level settings overrides are ignored
+- Tool auto-acceptance is disabled
+
+The `trust: true` property on individual MCP servers only controls tool
+call confirmation dialogs — it does NOT bypass the workspace-level trust
+gate. Without workspace trust, the model has no MCP tools and falls back
+to built-in tools (web_search, which policy denies).
+
+**Fix:** Add `GEMINI_CLI_TRUST_WORKSPACE = "true"` to `[agent].env` in
+`config/openab.toml`. This tells Gemini CLI to trust the workspace in
+headless mode, allowing MCP servers to start.
+
+**Sources:**
+
+- [Trusted Folders | Gemini CLI](https://geminicli.com/docs/cli/trusted-folders/)
+- [MCP servers with Gemini CLI](https://geminicli.com/docs/tools/mcp-server/)
+  — "stdio MCP servers are only Connected if the folder is trusted"
+
+---
+
+## Bug 11 (Langfuse): Telemetry file is pretty-printed OTel LogRecordImpl
+
+**Symptom:** events-emitter.js line-by-line parser gets individual
+primitives instead of JSON objects (confirmed by diagnostic logs).
+
+**Root cause (from format discovery on 2026-05-14):**
+
+The telemetry file contains pretty-printed `@opentelemetry/sdk-logs`
+`LogRecordImpl` objects — one multi-line JSON object per event:
+
+```json
+{
+  "hrTime": [1778759427, 693000000],
+  "attributes": { "session.id": "...", "prompt": "..." },
+  "_eventName": "gemini_cli.user_prompt",
+  ...
+}
+```
+
+Line-by-line `JSON.parse` can never reassemble these.
+
+**Fix:** Replaced readline-based parser with a brace-depth streaming JSON
+parser that tracks `{ }` nesting to delimit complete objects. Key field
+mapping changes:
+
+| Old path | New path |
+|---|---|
+| `raw.name` | `raw._eventName \|\| raw.eventName` |
+| `raw.timestamp` | `new Date(raw.hrTime[0] * 1000 + raw.hrTime[1] / 1e6)` |
+| `raw.attributes` | `raw.attributes` (same) |
+
+---
+
 ## Files Changed
 
 | File | Change |
 |---|---|
+| `agent-runtime/config/openab.toml` | Add `GEMINI_CLI_TRUST_WORKSPACE = "true"` to `[agent].env` — **the MCP root cause fix** |
 | `agent-runtime/mcp/servers.json` | Value `$GITHUB_PERSONAL_ACCESS_TOKEN` -> `$GITHUB_TOKEN`; add `"trust": true` to both servers |
 | `agent-runtime/gemini/settings.json` | `sandboxNetworkAccess: false` -> `true` (unblock MCP server network) |
-| `agent-runtime/scripts/render-mcp-config.sh` | Add `expand_and_read_servers()` helper — resolves `$VAR` / `${VAR}` from `process.env` at boot, bakes real token into `settings.json` |
+| `agent-runtime/scripts/render-mcp-config.sh` | Add `expand_and_read_servers()` helper — resolves `$VAR` / `${VAR}` from `process.env` at boot |
 | `agent-runtime/scripts/entrypoint.sh` | Keep `LANGFUSE_BASE_URL` (human-readable); no longer relies on SDK auto-read |
-| `agent-runtime/scripts/healthz.js` | Pass `secretKey`, `publicKey`, `baseUrl` explicitly to `new Langfuse()` constructor; add `flushAsync()` every 15 s in heartbeat; add `shutdownAsync()` on SIGTERM |
-| `agent-runtime/scripts/events-emitter.js` | Rewrite `reshape()` for actual Gemini CLI telemetry; add session_id fallback; log first 20 raw file LINES to stderr; skip non-object JSON values |
+| `agent-runtime/scripts/healthz.js` | Pass `secretKey`, `publicKey`, `baseUrl` explicitly to `new Langfuse()` constructor; add flush + SIGTERM shutdown |
+| `agent-runtime/scripts/events-emitter.js` | **Complete rewrite**: brace-depth streaming JSON parser for pretty-printed OTel LogRecordImpl; read `_eventName`; convert `hrTime` tuples; session_id fallback |
 | `agent-runtime/scripts/lib/langfuseSink.js` | Add try/catch error isolation in `onEvent`; add stale trace cleanup on new `message_in` |
 
 ## Verification Steps
