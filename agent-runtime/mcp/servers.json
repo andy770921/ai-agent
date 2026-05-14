@@ -8,7 +8,7 @@
     "command": "github-mcp-server",
     "args": ["stdio", "--toolsets=repos,issues,pull_requests"],
     "env": {
-      "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_PERSONAL_ACCESS_TOKEN"
+      "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"
     }
   }
 }

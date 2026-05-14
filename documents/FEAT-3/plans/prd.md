@@ -253,4 +253,4 @@ These are set as HF Space secrets and passed to the sidecar process in
 ### Status
 
 - [x] Phase 1: Universal MCP config + env_clear fix
-- [ ] Phase 2: MCP env fix + Langfuse observability
+- [x] Phase 2: MCP env fix + Langfuse observability (see `development/fix-mcp-env-and-langfuse-pipeline.md`)

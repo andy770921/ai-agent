@@ -25,11 +25,16 @@ const ringBuffer = createRingBufferSink({ limit: 200 });
 const sseFanout = createSseFanoutSink();
 
 let langfuseSink = null;
+let langfuseInstance = null;
 try {
   if (process.env.LANGFUSE_SECRET_KEY) {
     const Langfuse = require('langfuse').default;
-    // auto-reads LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_BASE_URL
-    langfuseSink = createLangfuseSink({ langfuse: new Langfuse() });
+    langfuseInstance = new Langfuse({
+      secretKey: process.env.LANGFUSE_SECRET_KEY,
+      publicKey: process.env.LANGFUSE_PUBLIC_KEY,
+      baseUrl: process.env.LANGFUSE_BASE_URL,
+    });
+    langfuseSink = createLangfuseSink({ langfuse: langfuseInstance });
     console.error('langfuse: enabled');
   }
 } catch (e) {
@@ -105,5 +110,20 @@ http
   })
   .listen(PORT);
 
-// === Heartbeat ==============================================================
-setInterval(() => sseFanout.heartbeat(), 15_000);
+// === Heartbeat + Langfuse flush =============================================
+setInterval(() => {
+  sseFanout.heartbeat();
+  if (langfuseInstance) langfuseInstance.flushAsync().catch(() => {});
+}, 15_000);
+
+// === Graceful shutdown (flush Langfuse before exit) =========================
+process.on('SIGTERM', async () => {
+  if (langfuseInstance) {
+    try {
+      await langfuseInstance.shutdownAsync();
+    } catch {
+      /* best-effort */
+    }
+  }
+  process.exit(0);
+});
