@@ -239,15 +239,8 @@ JSONL format documented on the telemetry event catalog page. The events-
 emitter's line-by-line JSON parser picks up individual primitive values
 from this structure, none of which are event objects.
 
-**Current fix (diagnostic):** Added raw-line logging (`events-emitter:
-line[N] ...`) to capture the first 20 lines of the actual file content.
-Also filter out non-object JSON values (primitives). Next deployment's
-logs will reveal the exact file structure needed to write a correct parser.
-
-**Future fix (after format discovery):** Either:
-- Rewrite the parser to handle the actual OTLP file format, OR
-- Switch to OTLP HTTP endpoint approach: run an OTLP receiver in the
-  sidecar and set `GEMINI_TELEMETRY_OTLP_ENDPOINT` in `[agent].env`
+**Fix:** Replaced readline-based parser with a brace-depth streaming JSON
+parser. See Bug 11 for details.
 
 ---
 
@@ -297,8 +290,7 @@ The telemetry file contains pretty-printed `@opentelemetry/sdk-logs`
 ```json
 {
   "hrTime": [1778759427, 693000000],
-  "attributes": { "session.id": "...", "prompt": "..." },
-  "_eventName": "gemini_cli.user_prompt",
+  "attributes": { "session.id": "...", "event.name": "gemini_cli.user_prompt", "prompt": "..." },
   ...
 }
 ```
@@ -306,14 +298,51 @@ The telemetry file contains pretty-printed `@opentelemetry/sdk-logs`
 Line-by-line `JSON.parse` can never reassemble these.
 
 **Fix:** Replaced readline-based parser with a brace-depth streaming JSON
-parser that tracks `{ }` nesting to delimit complete objects. Key field
-mapping changes:
+parser that tracks `{ }` nesting to delimit complete objects.
 
-| Old path | New path |
+---
+
+## Bug 12 (Langfuse): Event name stored in `attributes["event.name"]`
+
+**Symptom:** After fixing the parser (Bug 11), records are assembled
+correctly but `reshape()` still matches no events. Diagnostic logs from
+2026-05-14 deployment confirmed:
+
+```
+events-emitter: record[1] {"attrKeys":["session.id","event.name","model","mcp_servers_count",...]}
+```
+
+`_eventName` and `eventName` are both `undefined` in the serialized JSON.
+
+**Root cause:**
+
+Gemini CLI v0.41.2 stores the event name in `attributes["event.name"]`,
+not in `_eventName` or `eventName` at the top level. The `_eventName`
+getter on the OTel `LogRecordImpl` class does not serialize because
+`JSON.stringify` only captures own enumerable properties, and the getter
+lives on the prototype.
+
+**Fix:** Changed event name lookup to check `attrs['event.name']` first:
+
+```js
+const eventName = attrs['event.name'] || raw._eventName || raw.eventName || raw.name;
+```
+
+Key field mapping (final):
+
+| What | Field path |
 |---|---|
-| `raw.name` | `raw._eventName \|\| raw.eventName` |
-| `raw.timestamp` | `new Date(raw.hrTime[0] * 1000 + raw.hrTime[1] / 1e6)` |
-| `raw.attributes` | `raw.attributes` (same) |
+| Event name | `raw.attributes["event.name"]` |
+| Timestamp | `new Date(raw.hrTime[0] * 1000 + raw.hrTime[1] / 1e6)` |
+| Session ID | `raw.attributes["session.id"]` |
+| Prompt text | `raw.attributes.prompt` |
+| Tool name | `raw.attributes.function_name` |
+| Tool args | `raw.attributes.function_args` |
+| Duration | `raw.attributes.duration_ms` |
+| Success | `raw.attributes.success` |
+
+**Verified locally:** 4 mock OTel records → 4 correct AgentEvents
+(message_in, tool_call, tool_result, message_out).
 
 ---
 
@@ -327,23 +356,29 @@ mapping changes:
 | `agent-runtime/scripts/render-mcp-config.sh` | Add `expand_and_read_servers()` helper — resolves `$VAR` / `${VAR}` from `process.env` at boot |
 | `agent-runtime/scripts/entrypoint.sh` | Keep `LANGFUSE_BASE_URL` (human-readable); no longer relies on SDK auto-read |
 | `agent-runtime/scripts/healthz.js` | Pass `secretKey`, `publicKey`, `baseUrl` explicitly to `new Langfuse()` constructor; add flush + SIGTERM shutdown |
-| `agent-runtime/scripts/events-emitter.js` | **Complete rewrite**: brace-depth streaming JSON parser for pretty-printed OTel LogRecordImpl; read `_eventName`; convert `hrTime` tuples; session_id fallback |
+| `agent-runtime/scripts/events-emitter.js` | **Complete rewrite**: brace-depth streaming JSON parser for pretty-printed OTel LogRecordImpl; read `attributes["event.name"]`; convert `hrTime` tuples; session_id fallback |
 | `agent-runtime/scripts/lib/langfuseSink.js` | Add try/catch error isolation in `onEvent`; add stale trace cleanup on new `message_in` |
 
-## Verification Steps
+## Verification Results
 
-1. **MCP:** Send "Can you grab andy770921 GitHub repo name for me? Only need
-   top 5" via LINE. Agent should respond with repo list (not web search
-   error) within ~30 seconds.
+1. **MCP: CONFIRMED WORKING (2026-05-14 20:14 local)**
+   - LINE response: `✅ search_repositories (github MCP Server)`
+   - Returned top 5 repos in 14 seconds (down from 230s timeouts)
+   - Used reply API (fast enough for replyToken)
+   - Root cause was Bug 10 (`GEMINI_CLI_TRUST_WORKSPACE`)
 
-2. **Telemetry format discovery:** Check container logs for
-   `events-emitter: line[1]` through `line[20]` — these show the raw file
-   content, revealing the actual Gemini CLI telemetry format. This data
-   determines whether a parser fix or an OTLP endpoint switch is needed.
+2. **Langfuse: PENDING VERIFICATION**
+   - Local test confirms full pipeline: 4 OTel records → 4 AgentEvents
+   - Bug 12 (`attributes["event.name"]`) was the final missing piece
+   - After deploy: send a LINE message, then check Langfuse Tracing
+     at `https://jp.cloud.langfuse.com` → "line-ai-agent" → Tracing.
+     Traces should appear within ~15 seconds (flush interval).
 
-3. **Langfuse:** If events flow, traces appear at
-   `https://jp.cloud.langfuse.com` -> project "line-ai-agent" -> Tracing.
-   If not, the telemetry format discovery (step 2) will inform the next fix.
-
-4. **Graceful degradation:** If `LANGFUSE_SECRET_KEY` is unset, sidecar
+3. **Graceful degradation:** If `LANGFUSE_SECRET_KEY` is unset, sidecar
    starts normally, SSE works, no Langfuse errors in logs.
+
+## Known limitation
+
+- The Gemini API free-tier daily quota may cause "Internal Server Error
+  (code: 500) You have exhausted your daily quota on this model" — this
+  is not a bug in our system. Quota resets daily.
