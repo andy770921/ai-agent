@@ -81,7 +81,7 @@ function pushChunk(chunk) {
 
 // Log the first N complete records for format discovery.
 let recordsSampled = 0;
-const RECORD_SAMPLE_LIMIT = 3;
+const RECORD_SAMPLE_LIMIT = 15;
 
 function processJsonObject(text) {
   let raw;
@@ -93,11 +93,10 @@ function processJsonObject(text) {
 
   if (recordsSampled < RECORD_SAMPLE_LIMIT) {
     recordsSampled++;
-    // Log a compact preview (keys + eventName) — not the full object
+    const a = raw.attributes || {};
     const preview = {
-      _eventName: raw._eventName,
-      eventName: raw.eventName,
-      attrKeys: raw.attributes ? Object.keys(raw.attributes) : [],
+      eventName: a['event.name'] || raw._eventName || raw.eventName || '(none)',
+      attrKeys: Object.keys(a),
       hrTime: raw.hrTime,
     };
     console.error(`events-emitter: record[${recordsSampled}] ${JSON.stringify(preview)}`);
@@ -179,8 +178,9 @@ function reshape(raw) {
 
   const attrs = raw.attributes || {};
 
-  // Event name: _eventName (private backing field) or eventName (getter).
-  const eventName = raw._eventName || raw.eventName || raw.name;
+  // Event name: Gemini CLI v0.41.x stores it in attributes["event.name"],
+  // NOT in _eventName or eventName (those are undefined in the serialized JSON).
+  const eventName = attrs['event.name'] || raw._eventName || raw.eventName || raw.name;
 
   // Session ID from attributes.
   const sid = attrs['session.id'] || raw.session_id;
