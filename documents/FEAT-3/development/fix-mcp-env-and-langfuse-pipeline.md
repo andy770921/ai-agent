@@ -151,15 +151,64 @@ previous trace is closed).
 
 ---
 
+## Bug 6 (MCP): Missing `trust: true` on MCP server definitions
+
+**Symptom:** After fixing env expansion (Bug 1), MCP tools are still not
+available to the agent. Agent falls back to web_search.
+
+**Root cause:**
+
+Gemini CLI's MCP server config defaults `trust` to `false`. When `false`,
+every MCP tool call requires user confirmation. In ACP mode, the ACP client
+(OpenAB) must handle these confirmations. Without `trust: true`, the tool
+approval flow may hang or silently fail — the agent never sees the MCP
+tools as available and falls back to web_search.
+
+**Fix:** Add `"trust": true` to both MCP server definitions in
+`mcp/servers.json`.
+
+**Source:**
+
+- [Gemini CLI MCP server docs](https://geminicli.com/docs/tools/mcp-server/)
+  — trust property: "bypasses all tool call confirmations for this server"
+
+---
+
+## Bug 7 (Langfuse pipeline): sessionUserId extraction silently fails
+
+**Symptom:** `events-emitter.js` processes telemetry lines but `reshape()`
+returns `null` for every event. No unrecognized-event logs, no events
+published to the bus, no Langfuse traces.
+
+**Root cause:**
+
+The `sessionUserId` is extracted from a `"sender_id"` JSON field in the
+prompt text. This assumes OpenAB injects a `<sender_context>` block into
+the prompt. If OpenAB does not inject this (or if the Gemini CLI telemetry
+truncates the prompt), the regex never matches, `sessionUserId` is always
+`undefined`, and `reshape()` returns `null` for every event — including
+unrecognized ones, because the `null` return is before the event-name
+switch.
+
+**Fix:**
+
+- Add session_id fallback: if sender_id extraction fails, use the Gemini
+  session_id as the user identifier. In our system, OpenAB creates one
+  Gemini session per LINE user, so session_id is unique per user.
+- Add diagnostic logging: print the first 10 raw telemetry events to
+  stderr for format discovery on next deployment.
+
+---
+
 ## Files Changed
 
 | File | Change |
 |---|---|
-| `agent-runtime/mcp/servers.json` | Value `$GITHUB_PERSONAL_ACCESS_TOKEN` -> `$GITHUB_TOKEN` (match HF Space secret name) |
+| `agent-runtime/mcp/servers.json` | Value `$GITHUB_PERSONAL_ACCESS_TOKEN` -> `$GITHUB_TOKEN`; add `"trust": true` to both servers |
 | `agent-runtime/scripts/render-mcp-config.sh` | Add `expand_and_read_servers()` helper — resolves `$VAR` / `${VAR}` from `process.env` at boot, bakes real token into `settings.json` |
 | `agent-runtime/scripts/entrypoint.sh` | Keep `LANGFUSE_BASE_URL` (human-readable); no longer relies on SDK auto-read |
 | `agent-runtime/scripts/healthz.js` | Pass `secretKey`, `publicKey`, `baseUrl` explicitly to `new Langfuse()` constructor; add `flushAsync()` every 15 s in heartbeat; add `shutdownAsync()` on SIGTERM |
-| `agent-runtime/scripts/events-emitter.js` | Rewrite `reshape()` for actual Gemini CLI telemetry (`raw.name`, `raw.attributes["session.id"]`, `gemini_cli.*` events); always log unrecognized event names once to stderr |
+| `agent-runtime/scripts/events-emitter.js` | Rewrite `reshape()` for actual Gemini CLI telemetry; add session_id fallback for sessionUserId; log first 10 raw events to stderr for format discovery; always log unrecognized event names |
 | `agent-runtime/scripts/lib/langfuseSink.js` | Add try/catch error isolation in `onEvent`; add stale trace cleanup on new `message_in` |
 
 ## Verification Steps
@@ -168,9 +217,10 @@ previous trace is closed).
    top 5" via LINE. Agent should respond with repo list (not web search
    error) within ~30 seconds.
 
-2. **Langfuse:** After a LINE conversation, open Langfuse at
+2. **Langfuse pipeline:** Check container logs for `events-emitter: raw[1]`
+   lines — these show the actual Gemini CLI telemetry format. If events
+   flow correctly, Langfuse should show traces at
    `https://jp.cloud.langfuse.com` -> project "line-ai-agent" -> Tracing.
-   Should see a trace named "line-message" with tool call spans.
 
 3. **Graceful degradation:** If `LANGFUSE_SECRET_KEY` is unset, sidecar
    starts normally, SSE works, no Langfuse errors in logs.

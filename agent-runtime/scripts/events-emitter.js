@@ -108,7 +108,19 @@ function tail() {
 // Log each unrecognized event name once so we can refine the mapping.
 const seenUnrecognized = new Set();
 
+// Log the first N raw events to stderr for format discovery.
+let rawEventsSampled = 0;
+const RAW_SAMPLE_LIMIT = 10;
+
 function reshape(raw) {
+  // Diagnostic: log raw event structure for the first few events so we can
+  // verify the actual Gemini CLI telemetry format after deployment.
+  if (rawEventsSampled < RAW_SAMPLE_LIMIT) {
+    rawEventsSampled++;
+    const preview = JSON.stringify(raw).slice(0, 500);
+    console.error(`events-emitter: raw[${rawEventsSampled}] ${preview}`);
+  }
+
   const ts = raw.timestamp || raw.ts || new Date().toISOString();
   const attrs = raw.attributes || {};
 
@@ -118,16 +130,22 @@ function reshape(raw) {
   // Event name: Gemini CLI v0.41.x uses raw.name (e.g. "gemini_cli.user_prompt").
   const eventName = raw.name || raw.event || raw.type;
 
-  // OpenAB injects a <sender_context> block at the top of every prompt; the
-  // user_prompt event carries the LINE userId in its attributes.prompt field.
-  // We extract it and cache against the Gemini session_id for subsequent events.
+  // Try to extract LINE userId from prompt's <sender_context> block (OpenAB
+  // injects this). Cache against the Gemini session_id for subsequent events.
   const prompt = attrs.prompt || raw.prompt;
   if (prompt && sid) {
     const m = String(prompt).match(/"sender_id"\s*:\s*"([^"]+)"/);
     if (m) rememberSession(sid, m[1]);
   }
 
-  const sessionUserId = sid ? recentSession.get(sid) : undefined;
+  // Fallback: if sender_id extraction failed, use session_id itself as the
+  // user identifier. In our system each LINE user gets one Gemini session,
+  // so session_id is unique per user.
+  let sessionUserId = sid ? recentSession.get(sid) : undefined;
+  if (!sessionUserId && sid) {
+    rememberSession(sid, sid);
+    sessionUserId = sid;
+  }
   if (!sessionUserId) return null;
 
   switch (eventName) {
