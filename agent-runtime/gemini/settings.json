@@ -8,7 +8,7 @@
   "tools": {
     "useRipgrep": true,
     "truncateToolOutputThreshold": 40000,
-    "sandboxNetworkAccess": false
+    "sandboxNetworkAccess": true
   },
   "security": {
     "toolSandboxing": true,

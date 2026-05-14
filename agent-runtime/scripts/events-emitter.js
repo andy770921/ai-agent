@@ -47,13 +47,23 @@ function cleanup() {
   stream = null;
 }
 
+// Log the first N raw file lines (before JSON parsing) so we can discover
+// the actual Gemini CLI telemetry file format.
+let rawLinesSampled = 0;
+const RAW_LINE_LIMIT = 20;
+
 function openTail(start) {
   cleanup();
   stream = fs.createReadStream(SRC, { encoding: 'utf8', start });
   rl = readline.createInterface({ input: stream });
   rl.on('line', (line) => {
+    if (rawLinesSampled < RAW_LINE_LIMIT) {
+      rawLinesSampled++;
+      console.error(`events-emitter: line[${rawLinesSampled}] ${line.slice(0, 300)}`);
+    }
     try {
       const raw = JSON.parse(line);
+      if (typeof raw !== 'object' || raw === null) return; // skip primitives
       const result = reshape(raw);
       if (!result) return;
       const events = Array.isArray(result) ? result : [result];
@@ -108,19 +118,7 @@ function tail() {
 // Log each unrecognized event name once so we can refine the mapping.
 const seenUnrecognized = new Set();
 
-// Log the first N raw events to stderr for format discovery.
-let rawEventsSampled = 0;
-const RAW_SAMPLE_LIMIT = 10;
-
 function reshape(raw) {
-  // Diagnostic: log raw event structure for the first few events so we can
-  // verify the actual Gemini CLI telemetry format after deployment.
-  if (rawEventsSampled < RAW_SAMPLE_LIMIT) {
-    rawEventsSampled++;
-    const preview = JSON.stringify(raw).slice(0, 500);
-    console.error(`events-emitter: raw[${rawEventsSampled}] ${preview}`);
-  }
-
   const ts = raw.timestamp || raw.ts || new Date().toISOString();
   const attrs = raw.attributes || {};
 

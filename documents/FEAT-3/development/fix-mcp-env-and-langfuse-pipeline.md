@@ -200,15 +200,76 @@ switch.
 
 ---
 
+## Bug 8 (MCP): `sandboxNetworkAccess: false` blocks MCP server network
+
+**Symptom:** After fixing env expansion (Bug 1) and adding `trust: true`
+(Bug 6), GitHub MCP tools are STILL not available. Agent falls back to
+web_search. Container logs show no MCP-related errors.
+
+**Root cause:**
+
+`gemini/settings.json` has `toolSandboxing: true` + `sandboxNetworkAccess:
+false`. Gemini CLI v0.41.2 may sandbox MCP server subprocesses. With
+network access disabled, `github-mcp-server` cannot reach `api.github.com`
+— the server starts, fails to authenticate or list tools, and silently
+disconnects. The model never sees GitHub tools.
+
+**Fix:** Change `sandboxNetworkAccess` to `true` in `gemini/settings.json`.
+MCP servers need network access to reach external APIs.
+
+---
+
+## Bug 9 (Langfuse): Telemetry file is NOT JSONL — format completely wrong
+
+**Symptom:** Diagnostic logging on 2026-05-14 deployment shows the
+telemetry file contains individual primitive values per line:
+
+```
+events-emitter: raw[1] 317000000
+events-emitter: raw[2] 317000000
+events-emitter: raw[3] "r-andy770921-ai-agent-xbejgfl9-f665e-dxqx4"
+events-emitter: raw[4] "amd64"
+events-emitter: raw[5] null
+events-emitter: raw[6] 63
+events-emitter: raw[7] "/usr/local/bin/node"
+events-emitter: raw[8] "/usr/local/bin/node"
+events-emitter: raw[9] "--acp"
+events-emitter: raw[10] "22.22.2"
+```
+
+These are OTLP resource attributes (pod name, architecture, Node.js
+version, process path) — NOT JSON event objects.
+
+**Root cause:**
+
+Gemini CLI v0.41.2 with `GEMINI_TELEMETRY_TARGET=local` writes telemetry
+in an OTLP-derived format, not the `{"name":"gemini_cli.user_prompt",...}`
+JSONL format documented on the telemetry event catalog page. The events-
+emitter's line-by-line JSON parser picks up individual primitive values
+from this structure, none of which are event objects.
+
+**Current fix (diagnostic):** Added raw-line logging (`events-emitter:
+line[N] ...`) to capture the first 20 lines of the actual file content.
+Also filter out non-object JSON values (primitives). Next deployment's
+logs will reveal the exact file structure needed to write a correct parser.
+
+**Future fix (after format discovery):** Either:
+- Rewrite the parser to handle the actual OTLP file format, OR
+- Switch to OTLP HTTP endpoint approach: run an OTLP receiver in the
+  sidecar and set `GEMINI_TELEMETRY_OTLP_ENDPOINT` in `[agent].env`
+
+---
+
 ## Files Changed
 
 | File | Change |
 |---|---|
 | `agent-runtime/mcp/servers.json` | Value `$GITHUB_PERSONAL_ACCESS_TOKEN` -> `$GITHUB_TOKEN`; add `"trust": true` to both servers |
+| `agent-runtime/gemini/settings.json` | `sandboxNetworkAccess: false` -> `true` (unblock MCP server network) |
 | `agent-runtime/scripts/render-mcp-config.sh` | Add `expand_and_read_servers()` helper — resolves `$VAR` / `${VAR}` from `process.env` at boot, bakes real token into `settings.json` |
 | `agent-runtime/scripts/entrypoint.sh` | Keep `LANGFUSE_BASE_URL` (human-readable); no longer relies on SDK auto-read |
 | `agent-runtime/scripts/healthz.js` | Pass `secretKey`, `publicKey`, `baseUrl` explicitly to `new Langfuse()` constructor; add `flushAsync()` every 15 s in heartbeat; add `shutdownAsync()` on SIGTERM |
-| `agent-runtime/scripts/events-emitter.js` | Rewrite `reshape()` for actual Gemini CLI telemetry; add session_id fallback for sessionUserId; log first 10 raw events to stderr for format discovery; always log unrecognized event names |
+| `agent-runtime/scripts/events-emitter.js` | Rewrite `reshape()` for actual Gemini CLI telemetry; add session_id fallback; log first 20 raw file LINES to stderr; skip non-object JSON values |
 | `agent-runtime/scripts/lib/langfuseSink.js` | Add try/catch error isolation in `onEvent`; add stale trace cleanup on new `message_in` |
 
 ## Verification Steps
@@ -217,10 +278,14 @@ switch.
    top 5" via LINE. Agent should respond with repo list (not web search
    error) within ~30 seconds.
 
-2. **Langfuse pipeline:** Check container logs for `events-emitter: raw[1]`
-   lines — these show the actual Gemini CLI telemetry format. If events
-   flow correctly, Langfuse should show traces at
-   `https://jp.cloud.langfuse.com` -> project "line-ai-agent" -> Tracing.
+2. **Telemetry format discovery:** Check container logs for
+   `events-emitter: line[1]` through `line[20]` — these show the raw file
+   content, revealing the actual Gemini CLI telemetry format. This data
+   determines whether a parser fix or an OTLP endpoint switch is needed.
 
-3. **Graceful degradation:** If `LANGFUSE_SECRET_KEY` is unset, sidecar
+3. **Langfuse:** If events flow, traces appear at
+   `https://jp.cloud.langfuse.com` -> project "line-ai-agent" -> Tracing.
+   If not, the telemetry format discovery (step 2) will inform the next fix.
+
+4. **Graceful degradation:** If `LANGFUSE_SECRET_KEY` is unset, sidecar
    starts normally, SSE works, no Langfuse errors in logs.
