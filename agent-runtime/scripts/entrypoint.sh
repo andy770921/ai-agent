@@ -34,14 +34,14 @@ gw_pid=$!
 # ===== 4. Start the Node sidecar (background) ================================
 GEMINI_TELEMETRY_OUTFILE="${GEMINI_TELEMETRY_OUTFILE:-/var/log/openab/gemini-events.jsonl}" \
 DASHBOARD_INGEST_TOKEN="$DASHBOARD_INGEST_TOKEN" \
+LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}" \
+LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}" \
+LANGFUSE_BASE_URL="${LANGFUSE_BASE_URL:-https://jp.cloud.langfuse.com}" \
   node /usr/local/bin/healthz.js &
 hz_pid=$!
 
-# ===== 4b. Start HF Spaces reverse proxy if HF_SPACE=1 =====================
-if [ "${HF_SPACE:-}" = "1" ]; then
-  node /usr/local/bin/hf-proxy.js &
-  echo "hf-proxy started on :7860" >&2
-fi
+# ===== 4b. Start reverse proxy (routes :7860 → gateway/sidecar) ============
+node /usr/local/bin/hf-proxy.js &
 
 # ===== 5. Wait for the gateway to bind, then start openab core (NOT exec) ===
 # Cold Rust binaries can take 20+ seconds to bind. Wait up to 60s.

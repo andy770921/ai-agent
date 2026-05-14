@@ -90,8 +90,7 @@ HF Spaces only exposes port 7860. A reverse proxy (`hf-proxy.js`) routes:
 - `/webhook/*`, `/health` → `:8080` (openab-gateway)
 - everything else → `:8081` (Node sidecar)
 
-Activated by `HF_SPACE=1` env var. Without it, the container works as before
-with separate ports.
+The proxy always starts — no env var flag needed.
 
 ### Shared types
 
@@ -111,8 +110,10 @@ Each workspace has its own `.env.example`:
   `LINE_ALLOWED_USER_IDS`, `CF_UPLOAD_SECRET`, `DASHBOARD_INGEST_TOKEN`,
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
 - HF Space secrets — container env (LINE channel creds, `GEMINI_API_KEY`,
-  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, `HF_SPACE=1`, etc.). Set via
+  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, `LANGFUSE_SECRET_KEY`,
+  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`, etc.). Set via
   HF Space Settings → Repository secrets.
+- `agent-runtime/.env.example` — all container env vars with placeholders.
 
 The complete env-var table with who-reads-what is in
 `documents/FEAT-1/development/gemini-cli-tools.md` Step 6.

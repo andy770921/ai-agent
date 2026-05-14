@@ -88,9 +88,18 @@ macOS / Linux.
 | `CF_UPLOAD_SECRET`       | Bearer the container uses when `PUT`ing screenshots to the Worker's `/img/*` route                   | **Both** HF Space secret and the `edge/` Worker (must match)                 |
 | `DASHBOARD_INGEST_TOKEN` | Bearer the Worker sends when proxying `/events/stream` + `/sessions` to the Node sidecar             | **Both** HF Space secret and the `edge/` Worker (must match)                 |
 | `DASHBOARD_TOKEN`        | Bearer the dashboard frontend pastes into `/dashboard/login` and sends on every `/api/*` Worker call | `edge/` Worker only (kept distinct from `DASHBOARD_INGEST_TOKEN` on purpose) |
-| `HF_SPACE`               | Set to `1` to enable the reverse proxy on `:7860`                                                    | HF Space secret only                                                         |
 
-### 3. Post-deploy URLs (placeholder during build, real value after each service is up)
+### 3. Observability tokens (optional — Langfuse)
+
+| Token                | Source                                                        | Where it goes    |
+| -------------------- | ------------------------------------------------------------- | ---------------- |
+| `LANGFUSE_SECRET_KEY`| Langfuse → project settings → API Keys (`sk-lf-...`)         | HF Space secret  |
+| `LANGFUSE_PUBLIC_KEY`| Same page (`pk-lf-...`)                                      | HF Space secret  |
+| `LANGFUSE_BASE_URL`  | Fixed per region: `https://jp.cloud.langfuse.com`             | HF Space secret  |
+
+If these are not set, the sidecar runs without Langfuse (no error).
+
+### 4. Post-deploy URLs (placeholder during build, real value after each service is up)
 
 | Variable                            | File                          | Source of the real value                                                                         |
 | ----------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
@@ -114,7 +123,7 @@ The deploy sequence and live verification steps live in
 
 1. **Cloudflare**: create KV namespaces (`WEBHOOK_DEDUP` + `IMG_KV`); `wrangler secret put` for
    each Worker secret; `wrangler deploy` from `edge/`.
-2. **HF Spaces**: set all env vars as HF Space secrets (including `HF_SPACE=1`);
+2. **HF Spaces**: set all env vars as HF Space secrets;
    push `agent-runtime/` contents to the Space via GitHub Actions or manually.
    The container exposes `:7860` (reverse proxy → gateway `:8080` + sidecar `:8081`).
 3. **LINE Console**: point the Messaging API webhook at

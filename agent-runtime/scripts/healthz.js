@@ -10,6 +10,78 @@ if (!DASHBOARD_TOKEN) {
   process.exit(1);
 }
 
+// === Langfuse (optional — enabled when LANGFUSE_SECRET_KEY is set) ========
+let langfuse = null;
+try {
+  if (process.env.LANGFUSE_SECRET_KEY) {
+    const Langfuse = require('langfuse').default;
+    langfuse = new Langfuse(); // auto-reads LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_BASE_URL
+    console.error('langfuse: enabled');
+  }
+} catch (e) {
+  console.error('langfuse: init failed —', e.message);
+}
+
+// Active Langfuse traces keyed by LINE userId.
+// Each entry: { trace, generation, spans: Map<toolName, span> }
+const activeTraces = new Map();
+
+function sendToLangfuse(ev) {
+  if (!langfuse || !ev?.sessionUserId) return;
+  const userId = ev.sessionUserId;
+
+  switch (ev.type) {
+    case 'message_in': {
+      const trace = langfuse.trace({
+        name: 'line-message',
+        sessionId: userId,
+        userId: userId,
+        input: { text: ev.text },
+      });
+      const generation = trace.generation({
+        name: 'gemini-2.5-flash',
+        model: 'gemini-2.5-flash',
+        input: ev.text,
+      });
+      activeTraces.set(userId, { trace, generation, spans: new Map() });
+      break;
+    }
+    case 'tool_call': {
+      const ctx = activeTraces.get(userId);
+      if (!ctx) return;
+      const span = ctx.generation.span({
+        name: ev.tool || 'unknown',
+        input: ev.args,
+      });
+      ctx.spans.set(ev.tool, span);
+      break;
+    }
+    case 'tool_result': {
+      const ctx = activeTraces.get(userId);
+      if (!ctx) return;
+      const span = ctx.spans.get(ev.tool);
+      if (span) {
+        span.end({
+          output: ev.error || 'ok',
+          level: ev.ok ? 'DEFAULT' : 'ERROR',
+          statusMessage: ev.error,
+          metadata: { durationMs: ev.durationMs },
+        });
+        ctx.spans.delete(ev.tool);
+      }
+      break;
+    }
+    case 'message_out': {
+      const ctx = activeTraces.get(userId);
+      if (!ctx) return;
+      ctx.generation.end({ output: ev.text });
+      ctx.trace.update({ output: { text: ev.text, kind: ev.kind } });
+      activeTraces.delete(userId);
+      break;
+    }
+  }
+}
+
 // In-memory ring buffer of recent events keyed by sessionUserId.
 const RECENT_LIMIT = 200;
 const recent = new Map(); // userId -> AgentEvent[]
@@ -38,6 +110,7 @@ emitter.stdout.on('data', (chunk) => {
       continue;
     }
     appendRecent(ev);
+    sendToLangfuse(ev);
     fanOut(ev);
   }
 });
@@ -98,9 +171,7 @@ http
           lastEvent: last,
         };
       });
-      res
-        .writeHead(200, { 'content-type': 'application/json' })
-        .end(JSON.stringify(list));
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(list));
       return;
     }
 
@@ -112,9 +183,7 @@ http
         RECENT_LIMIT,
       );
       const evs = (recent.get(userId) ?? []).slice(-limit);
-      res
-        .writeHead(200, { 'content-type': 'application/json' })
-        .end(JSON.stringify(evs));
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(evs));
       return;
     }
 

@@ -146,10 +146,111 @@ Comparison against `openabdev/openab@main` revealed:
 - New adapters: WeCom, Feishu voice STT, Google Chat, Teams (not needed).
 - Session TTL default is 4h upstream; we intentionally use 168h.
 
-## Out of Scope
+## Out of Scope (Phase 1)
 
 - Multi-LLM concurrency (only one CLI runs at a time).
 - MCP server health monitoring or auto-restart (rely on LLM CLI's built-in
   MCP lifecycle).
 - VS Code / Zed config generation (not used in the container).
 - Adopting new upstream features (tracked for future work).
+
+---
+
+## Phase 2: MCP Env Fix & Langfuse Observability (2026-05-14)
+
+### Problem 1: MCP Servers Still Not Working After Phase 1 Deployment
+
+Despite the `env_clear()` fix in Phase 1 (adding `HOME`, `PATH`,
+`PLAYWRIGHT_BROWSERS_PATH` to `[agent].env`), MCP servers remain
+non-functional. End-to-end testing on 2026-05-13 showed the agent falling
+back to `web_search` (denied by policy at priority 800) instead of using the
+GitHub MCP server.
+
+Screenshot evidence: the LINE bot replied with "I apologize, but I was unable
+to retrieve the GitHub repository names for 'andy770921' because the web
+search tool encountered a quota error." The `agent_dispatch_ms` was 224 462 ms
+(~3.7 min), indicating prolonged retry/timeout cycles before the fallback.
+
+#### Root cause: env var expansion syntax in `mcp/servers.json`
+
+`mcp/servers.json` uses `"${GITHUB_PERSONAL_ACCESS_TOKEN}"` (curly-brace
+syntax). Gemini CLI's documented env expansion format is `"$VAR_NAME"`
+(without curly braces). The unexpanded token string is passed literally to
+`github-mcp-server`, which fails to authenticate against `api.github.com`
+and silently disconnects. The agent then has no GitHub tools available and
+falls back to `web_search`.
+
+**Fix:** Change env references from `"${VAR}"` to `"$VAR"` in
+`mcp/servers.json`.
+
+### Problem 2: No Observability Into Agent Tool Usage
+
+The current telemetry pipeline (`events-emitter.js` → `healthz.js` → SSE)
+captures events in an in-memory ring buffer with:
+- No persistent storage — events are lost on container restart.
+- No search or filtering — debugging requires reading raw JSON.
+- No visibility when MCP servers fail to connect — silent failures.
+- No trace visualization — cannot see the full conversation flow.
+
+#### Decision: Langfuse (Cloud, JP Region)
+
+After evaluating five observability platforms:
+
+| Option | Fit | Reason |
+|---|---|---|
+| **Langfuse** ✅ | Best | OTEL-native in v3, JS SDK, free tier 50k obs/mo, self-hostable |
+| LangSmith | Poor | LangChain-centric, no native OTEL receiver, needs adapter |
+| Jaeger | OK | Standard OTEL but no LLM-specific features (cost, tokens) |
+| Helicone | Poor | Proxy model incompatible with Gemini CLI |
+| Braintrust | OK | Needs SDK adapter, more evaluation-focused |
+
+**Langfuse instance details:**
+- Organization: "AI agent"
+- Project: "line-ai-agent"
+- Base URL: `https://jp.cloud.langfuse.com`
+- Region: JP
+- Plan: Hobby (free — 50k observations/month)
+
+#### Integration approach
+
+Leverage the existing telemetry pipeline — no new Gemini CLI env vars, no
+OTEL endpoint configuration. The Node sidecar (`healthz.js`) already receives
+parsed `AgentEvent` objects from `events-emitter.js`. Add the Langfuse JS SDK
+(`langfuse` npm package) to forward events to Langfuse Cloud.
+
+The Langfuse SDK auto-flushes in batches, so there is no performance impact
+on the sidecar's SSE streaming. If `LANGFUSE_SECRET_KEY` is not set, the
+integration is silently disabled — the sidecar works exactly as before.
+
+#### Data model mapping
+
+| AgentEvent type | Langfuse concept | Details |
+|---|---|---|
+| `message_in` | `trace` (create) + `generation` (start) | One trace per turn; sessionId = LINE userId |
+| `tool_call` | `span` (start) | Tool name as span name, args as input |
+| `tool_result` | `span` (end) | Duration, ok/error status, error message |
+| `message_out` | `generation` (end) + `trace` (update) | Response text as output |
+
+### New environment variables (required for Langfuse)
+
+| Variable | Who reads | Example |
+|---|---|---|
+| `LANGFUSE_SECRET_KEY` | healthz.js (sidecar) | `sk-lf-...` |
+| `LANGFUSE_PUBLIC_KEY` | healthz.js (sidecar) | `pk-lf-...` |
+| `LANGFUSE_BASE_URL` | healthz.js (sidecar) | `https://jp.cloud.langfuse.com` |
+
+These are set as HF Space secrets and passed to the sidecar process in
+`entrypoint.sh`. They are NOT passed to the Gemini CLI agent subprocess.
+
+### Out of scope (Phase 2)
+
+- Token usage / cost tracking (Gemini telemetry does not expose token counts).
+- OTEL-native Gemini → Langfuse pipeline (would require additional Gemini
+  telemetry env vars; rejected per user preference).
+- Langfuse prompt management (agent uses `gemini/system.md` directly).
+- Langfuse evaluations / scoring (future work).
+
+### Status
+
+- [x] Phase 1: Universal MCP config + env_clear fix
+- [ ] Phase 2: MCP env fix + Langfuse observability

@@ -61,6 +61,13 @@ RUN curl -fsSL "https://github.com/github/github-mcp-server/releases/download/v$
  && mv /tmp/github-mcp-server /usr/local/bin/github-mcp-server \
  && rm -rf /tmp/github-mcp-server*
 
+# --- Langfuse SDK for sidecar observability (optional — enabled by env) ---
+RUN mkdir -p /opt/sidecar \
+ && cd /opt/sidecar \
+ && npm init -y \
+ && npm install langfuse@3 --save
+ENV NODE_PATH=/opt/sidecar/node_modules
+
 # --- gh CLI (operator fallback; not exposed to the agent by default policy) ---
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
