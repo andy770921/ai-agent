@@ -346,6 +346,36 @@ Key field mapping (final):
 
 ---
 
+## Bug 13 (Langfuse): `gemini_cli.user_prompt` not emitted in ACP mode
+
+**Symptom:** After fixing the event name path (Bug 12), diagnostic logs
+from 2026-05-14 deployment show `gemini_cli.config`, `api_request`,
+`api_error`, `model_routing`, etc. — but NO `gemini_cli.user_prompt`.
+Zero AgentEvents produced, zero Langfuse traces.
+
+**Root cause:**
+
+Gemini CLI v0.41.2 in ACP mode does not emit `gemini_cli.user_prompt` in
+the telemetry file. Instead, the prompt is carried by
+`gemini_cli.api_request` (which has `request_text`, `prompt_id`, `model`).
+Similarly, responses come from `gemini_cli.api_response` (with token
+counts) or `gemini_cli.api_error` (with error details).
+
+**Fix:** Expanded the reshape event mapping:
+
+| Gemini CLI event | AgentEvent type | Key fields used |
+|---|---|---|
+| `gemini_cli.api_request` | `message_in` | `request_text` (contains sender_context) |
+| `gemini_cli.tool_call` | `tool_call` + `tool_result` | `function_name`, `duration_ms`, `success` |
+| `gemini_cli.api_response` | `message_out` | `input_token_count`, `output_token_count` |
+| `gemini_cli.api_error` | `message_out` (kind=error) | `error.message`, `status_code` |
+| `gemini_cli.conversation_finished` | `message_out` | (end signal) |
+
+**Verified locally:** 6 real OTel events → 5 AgentEvents (message_in,
+tool_call, tool_result, message_out x2). Full pipeline confirmed working.
+
+---
+
 ## Files Changed
 
 | File | Change |

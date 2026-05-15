@@ -1,26 +1,18 @@
-// events-emitter.js — emits one AgentEvent JSON per stdout line.
+// events-emitter.js — emits AgentEvent JSON lines to stdout.
 //
 // Source: Gemini CLI's $GEMINI_TELEMETRY_OUTFILE. Gemini CLI v0.41.x writes
-// telemetry as pretty-printed OpenTelemetry LogRecordImpl JSON objects,
-// concatenated in the file. Each record looks like:
+// telemetry as pretty-printed OpenTelemetry LogRecordImpl JSON objects.
+// We use a brace-depth streaming parser to reassemble them.
 //
-//   {
-//     "hrTime": [<seconds>, <nanoseconds>],
-//     "attributes": { "session.id": "...", ... },
-//     "_eventName": "gemini_cli.user_prompt",
-//     ...
-//   }
-//
-// The file is NOT JSONL — each object spans ~40+ lines. We use a brace-depth
-// streaming parser to reassemble complete JSON objects from the byte stream.
+// A single conversation turn produces this event sequence:
+//   api_request  (user prompt)       → message_in
+//   api_response (model: use tool)   → llm_response  (ends generation, keeps trace)
+//   tool_call    (MCP execution)     → tool_call + tool_result
+//   api_request  (follow-up)         → (skipped — same turn)
+//   api_response (final answer)      → llm_response  (ends generation, keeps trace)
+//   conversation_finished            → turn_end      (closes trace)
 //
 // See: https://geminicli.com/docs/cli/telemetry/
-//
-// Mapped events:
-//   gemini_cli.user_prompt           → message_in
-//   gemini_cli.tool_call             → tool_call + tool_result
-//   gemini_cli.conversation_finished → message_out
-//   gemini_cli.api_response          → (logged, not mapped)
 
 const fs = require('node:fs');
 
@@ -29,6 +21,10 @@ const SRC = process.env.GEMINI_TELEMETRY_OUTFILE || '/var/log/openab/gemini-even
 // LRU-cap so a long-running pod with many sessions doesn't leak.
 const SESSION_MAP_LIMIT = 200;
 const recentSession = new Map(); // Gemini session_id -> LINE userId
+
+// Track which sessions already emitted message_in (avoid duplicate traces
+// when multiple api_request events fire in one conversation turn).
+const sessionHasMessageIn = new Set();
 
 function rememberSession(sid, userId) {
   if (recentSession.has(sid)) recentSession.delete(sid);
@@ -40,10 +36,6 @@ function rememberSession(sid, userId) {
 }
 
 // === Brace-depth streaming JSON parser ======================================
-// Tracks { } depth to delimit individual JSON objects in a pretty-printed
-// file. Handles strings (with escapes) correctly so braces inside strings
-// don't confuse the parser.
-
 let jsonBuf = '';
 let depth = 0;
 let inString = false;
@@ -51,7 +43,7 @@ let escape = false;
 
 function pushChunk(chunk) {
   for (const ch of chunk) {
-    if (depth === 0 && ch !== '{') continue; // skip inter-object whitespace
+    if (depth === 0 && ch !== '{') continue;
     jsonBuf += ch;
 
     if (escape) {
@@ -79,7 +71,6 @@ function pushChunk(chunk) {
   }
 }
 
-// Log the first N complete records for format discovery.
 let recordsSampled = 0;
 const RECORD_SAMPLE_LIMIT = 15;
 
@@ -88,7 +79,7 @@ function processJsonObject(text) {
   try {
     raw = JSON.parse(text);
   } catch {
-    return; // skip malformed
+    return;
   }
 
   if (recordsSampled < RECORD_SAMPLE_LIMIT) {
@@ -141,7 +132,6 @@ function pollAndResume() {
     return;
   }
   if (stat.size < lastOffset) {
-    // Truncated — reset parser state and re-read from 0.
     lastOffset = 0;
     jsonBuf = '';
     depth = 0;
@@ -171,28 +161,21 @@ function tail() {
 const seenUnrecognized = new Set();
 
 function reshape(raw) {
-  // Convert hrTime [seconds, nanoseconds] to ISO timestamp.
   const ts = raw.hrTime
     ? new Date(raw.hrTime[0] * 1000 + raw.hrTime[1] / 1e6).toISOString()
     : raw.timestamp || new Date().toISOString();
 
   const attrs = raw.attributes || {};
-
-  // Event name: Gemini CLI v0.41.x stores it in attributes["event.name"],
-  // NOT in _eventName or eventName (those are undefined in the serialized JSON).
   const eventName = attrs['event.name'] || raw._eventName || raw.eventName || raw.name;
-
-  // Session ID from attributes.
   const sid = attrs['session.id'] || raw.session_id;
 
-  // Try to extract LINE userId from prompt's <sender_context> block.
-  const prompt = attrs.prompt || raw.prompt;
-  if (prompt && sid) {
-    const m = String(prompt).match(/"sender_id"\s*:\s*"([^"]+)"/);
+  // Extract LINE userId from prompt/request_text (<sender_context> block).
+  const promptText = attrs.prompt || attrs.request_text || raw.prompt;
+  if (promptText && sid) {
+    const m = String(promptText).match(/"sender_id"\s*:\s*"([^"]+)"/);
     if (m) rememberSession(sid, m[1]);
   }
 
-  // Fallback: use session_id as user identifier (one session per LINE user).
   let sessionUserId = sid ? recentSession.get(sid) : undefined;
   if (!sessionUserId && sid) {
     rememberSession(sid, sid);
@@ -202,12 +185,20 @@ function reshape(raw) {
 
   switch (eventName) {
     case 'gemini_cli.user_prompt':
+    case 'gemini_cli.api_request': {
+      // Only emit message_in for the FIRST api_request per session/turn.
+      // Subsequent api_requests (follow-ups after tool calls) are skipped
+      // to avoid creating duplicate Langfuse traces.
+      if (sessionHasMessageIn.has(sid)) return null;
+      sessionHasMessageIn.add(sid);
       return {
         type: 'message_in',
         sessionUserId,
         ts,
-        text: String(prompt ?? ''),
+        text: String(attrs.request_text || promptText || ''),
+        model: String(attrs.model || ''),
       };
+    }
 
     case 'gemini_cli.tool_call': {
       const toolName = String(attrs.function_name || 'unknown');
@@ -228,13 +219,39 @@ function reshape(raw) {
       ];
     }
 
-    case 'gemini_cli.conversation_finished':
+    // LLM response — carries token counts. Does NOT close the trace.
+    case 'gemini_cli.api_response':
       return {
-        type: 'message_out',
+        type: 'llm_response',
         sessionUserId,
         ts,
-        text: String(attrs.text || ''),
-        kind: 'text',
+        model: String(attrs.model || ''),
+        inputTokens: Number(attrs.input_token_count || 0),
+        outputTokens: Number(attrs.output_token_count || 0),
+        durationMs: Number(attrs.duration_ms || 0),
+        statusCode: Number(attrs.status_code || 0),
+      };
+
+    // API error — record it but don't close trace (conversation_finished does).
+    case 'gemini_cli.api_error':
+      return {
+        type: 'llm_response',
+        sessionUserId,
+        ts,
+        model: String(attrs.model_name || attrs.model || ''),
+        error: String(attrs['error.message'] || attrs.error || 'API error'),
+        statusCode: Number(attrs.status_code || attrs['http.status_code'] || 0),
+        durationMs: Number(attrs.duration_ms || attrs.duration || 0),
+      };
+
+    // End of conversation turn — closes the trace.
+    case 'gemini_cli.conversation_finished':
+      sessionHasMessageIn.delete(sid); // reset for next turn
+      return {
+        type: 'turn_end',
+        sessionUserId,
+        ts,
+        turnCount: Number(attrs.turnCount || 0),
       };
 
     default:
