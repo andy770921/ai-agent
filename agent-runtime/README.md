@@ -28,7 +28,7 @@ curl http://localhost:8081/healthz   # sidecar
 - `config/openab.toml` — OpenAB TOML, expanded by `scripts/render-config.sh`.
 - `gemini/settings.json` — Gemini CLI settings (mcpServers + sandbox + model).
 - `gemini/system.md` — system-prompt override (LINE persona).
-- `gemini/policies/feat1.toml` — Policy Engine rules (tool allowlist).
+- `gemini/policies/tool-allowlist.toml` — Policy Engine rules (tool allowlist).
 - `scripts/entrypoint.sh` — boot order: render config → gateway → sidecar → openab.
 - `scripts/render-config.sh` — env-var interpolation + CSV→TOML-array conversion.
 - `scripts/healthz.js` — Node sidecar: `/healthz`, `/events/stream`, `/sessions`.

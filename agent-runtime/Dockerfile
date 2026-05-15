@@ -87,7 +87,7 @@ COPY config/openab.toml /etc/openab/openab.toml
 COPY mcp/servers.json              /etc/openab/mcp-servers.json
 COPY --chown=node:node gemini/settings.json        /home/node/.gemini/settings.json
 COPY --chown=node:node gemini/system.md            /home/node/.gemini/system.md
-COPY --chown=node:node gemini/policies/feat1.toml  /home/node/.gemini/policies/feat1.toml
+COPY --chown=node:node gemini/policies/tool-allowlist.toml  /home/node/.gemini/policies/tool-allowlist.toml
 
 # --- Copy scripts ---
 COPY scripts/entrypoint.sh        /usr/local/bin/entrypoint.sh
