@@ -36,11 +36,16 @@ export interface AgentMessageOut extends AgentEventBase {
   imageUrl?: string;
 }
 
+export interface SessionEnded extends AgentEventBase {
+  type: 'session_ended';
+}
+
 export type AgentEvent =
   | AgentMessageIn
   | AgentToolCall
   | AgentToolResult
-  | AgentMessageOut;
+  | AgentMessageOut
+  | SessionEnded;
 
 export interface SessionSummary {
   userId: string;

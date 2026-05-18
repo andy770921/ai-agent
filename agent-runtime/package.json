@@ -1,0 +1,33 @@
+{
+  "name": "@repo/agent-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p .",
+    "start": "node --enable-source-maps dist/server.js",
+    "test": "vitest run",
+    "test:acceptance": "tsx tests/acceptance/runner.ts",
+    "postinstall": "node scripts/install-mcp-deps.cjs"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "1",
+    "@ai-sdk/google": "1",
+    "@ai-sdk/openai": "1",
+    "@hono/node-server": "^1",
+    "@mastra/core": "^0.10",
+    "@mastra/mcp": "^0.3",
+    "@playwright/mcp": "^0.0.30",
+    "@repo/shared": "*",
+    "@supabase/supabase-js": "^2",
+    "hono": "^4",
+    "langfuse-vercel": "^3",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4",
+    "typescript": "^5.7",
+    "vitest": "^3"
+  }
+}

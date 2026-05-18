@@ -10,4 +10,5 @@ export interface Env {
   CF_UPLOAD_SECRET: string;
   DASHBOARD_INGEST_TOKEN: string;
   DASHBOARD_TOKEN: string;
+  CURATOR_TOKEN?: string;
 }

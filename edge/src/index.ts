@@ -1,4 +1,5 @@
 import type { Env } from './env';
+import { handleCuratorCron } from './cron/curator';
 import { handleLineWebhook } from './lineWebhook';
 import { handleImageUpload } from './imageUpload';
 import { handleImageServe } from './imageServe';
@@ -93,4 +94,6 @@ const router = createRouter<Env>(
 
 export default {
   fetch: router.fetch,
+  scheduled: (_event: ScheduledEvent, env: Env, _ctx: ExecutionContext) =>
+    handleCuratorCron(env),
 };
