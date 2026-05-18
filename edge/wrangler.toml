@@ -36,7 +36,7 @@ DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 # === Cron trigger: curator (FEAT-4) ===
 # Sunday 18:00 UTC = Sunday 02:00 UTC+8
 [triggers]
-crons = ["0 18 * * 0"]
+crons = ["0 18 * * SUN"]
 
 # === Secrets (set via `wrangler secret put <NAME>`) ===
 # LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge

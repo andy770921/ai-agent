@@ -459,7 +459,7 @@ single global system prompt (`agent_config.system_prompt`), not in
 
 ### Eviction (LRU + cap)
 
-Weekly Cloudflare cron (`schedule: "0 18 * * 0"` — Sunday 02:00 UTC+8):
+Weekly Cloudflare cron (`schedule: "0 18 * * SUN"` — Sunday 02:00 UTC+8):
 
 ```sql
 -- Phase 1: pure SQL state transitions

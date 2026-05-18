@@ -377,7 +377,7 @@ export async function curatorHandler(c: Context) {
 
 ```toml
 [triggers]
-crons = ["0 18 * * 0"]   # Sunday 02:00 UTC+8
+crons = ["0 18 * * SUN"]   # Sunday 02:00 UTC+8
 
 [[unsafe.bindings]]
 type = "secret_text"
