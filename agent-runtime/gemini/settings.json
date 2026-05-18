@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "gemini-3-flash"
+    "name": "gemini-3-flash-preview"
   },
   "general": {
     "defaultApprovalMode": "default"

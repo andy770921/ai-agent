@@ -12,7 +12,7 @@
 //   llm_response → end generation #2 (final answer)
 //   turn_end     → close trace
 
-function createLangfuseSink({ langfuse, modelName = 'gemini-3-flash' }) {
+function createLangfuseSink({ langfuse, modelName = 'gemini-3-flash-preview' }) {
   // userId -> { trace, generation, generationCount, spans, startedAt }
   const activeTraces = new Map();
 
