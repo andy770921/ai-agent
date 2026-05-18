@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # --- Gemini CLI (pinned, matches upstream openab Dockerfile.gemini family) ---
-ARG GEMINI_CLI_VERSION=0.41.2
+ARG GEMINI_CLI_VERSION=0.42.0
 RUN npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION} --retry 3
 
 # --- Playwright MCP + Chromium browser (pinned, downloaded at build time) ---

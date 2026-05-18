@@ -169,10 +169,13 @@ function reshape(raw) {
   const eventName = attrs['event.name'] || raw._eventName || raw.eventName || raw.name;
   const sid = attrs['session.id'] || raw.session_id;
 
-  // Extract LINE userId from prompt/request_text (<sender_context> block).
-  const promptText = attrs.prompt || attrs.request_text || raw.prompt;
-  if (promptText && sid) {
-    const m = String(promptText).match(/"sender_id"\s*:\s*"([^"]+)"/);
+  // Extract LINE userId from any attribute that contains the <sender_context>
+  // block.  Gemini CLI may split the conversation into multiple `parts`;
+  // request_text often holds only the last part, so we search all string-
+  // valued attributes (and the raw body) for the sender_id pattern.
+  if (sid && !recentSession.has(sid)) {
+    const haystack = JSON.stringify(attrs) + (raw.body ? JSON.stringify(raw.body) : '');
+    const m = haystack.match(/sender_id["\s:\\]+([U][0-9a-f]{32,})/);
     if (m) rememberSession(sid, m[1]);
   }
 
@@ -195,7 +198,7 @@ function reshape(raw) {
         type: 'message_in',
         sessionUserId,
         ts,
-        text: String(attrs.request_text || promptText || ''),
+        text: String(attrs.request_text || attrs.prompt || raw.prompt || ''),
         model: String(attrs.model || ''),
       };
     }

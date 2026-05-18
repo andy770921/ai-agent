@@ -12,9 +12,7 @@
 //   llm_response → end generation #2 (final answer)
 //   turn_end     → close trace
 
-const STALE_MS = 10 * 60 * 1000; // 10 minutes
-
-function createLangfuseSink({ langfuse, modelName = 'gemini-2.5-flash' }) {
+function createLangfuseSink({ langfuse, modelName = 'gemini-3-flash' }) {
   // userId -> { trace, generation, generationCount, spans, startedAt }
   const activeTraces = new Map();
 
@@ -43,7 +41,9 @@ function createLangfuseSink({ langfuse, modelName = 'gemini-2.5-flash' }) {
               try {
                 if (prev.generation) prev.generation.end({ output: '(interrupted)' });
                 prev.trace.update({ output: { text: '(interrupted)' } });
-              } catch { /* best-effort */ }
+              } catch {
+                /* best-effort */
+              }
               activeTraces.delete(userId);
             }
 
