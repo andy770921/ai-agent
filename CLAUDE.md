@@ -5,22 +5,22 @@ code in this repository.
 
 ## Project Overview
 
-FEAT-1 — a LINE-driven LLM agent system. Three independently-deployed
+A LINE-driven LLM agent system (FEAT-1 → FEAT-4). Three independently-deployed
 components plus a Docker container:
 
 ```
 ├── frontend/        # Next.js 15 — dashboard (Cloudflare Pages, static export)
 ├── shared/          # @repo/shared — AgentEvent / SessionSummary / health types
 ├── edge/            # Cloudflare Worker — webhook + KV-hosted images + dashboard BFF
-├── agent-runtime/   # Docker container for HF Spaces (NOT an npm workspace)
+├── agent-runtime/   # Docker container for HF Spaces (Mastra + Hono, npm workspace)
 ├── documents/       # Per-ticket plans (PRDs + implementation docs)
 ├── .claude/         # Custom slash commands
 ├── turbo.json       # Turborepo task graph
-└── package.json     # npm workspaces root (frontend + shared + edge)
+└── package.json     # npm workspaces root (frontend + shared + edge + agent-runtime)
 ```
 
-The original NestJS `backend/` workspace was removed when the boilerplate was
-repurposed for FEAT-1; the dashboard talks directly to the Cloudflare Worker.
+The `agent-runtime/` was rewritten in FEAT-4: OpenAB (Rust) + Gemini CLI replaced
+with a single Node 22 TypeScript process using Mastra + Vercel AI SDK.
 
 ## Commands
 
@@ -43,9 +43,9 @@ cd edge && npx vitest run test/line/webhookHandler.test.ts
 cd frontend && npx jest src/path/to/file.spec.ts
 ```
 
-**Sidecar tests (Node built-in runner):**
+**Agent-runtime tests (Vitest):**
 ```bash
-cd agent-runtime && node --test scripts/lib/
+cd agent-runtime && npx vitest run
 ```
 
 **Build the dashboard for Cloudflare Pages:**
@@ -62,25 +62,28 @@ npm run build:pages --workspace=frontend
 2. Worker verifies `X-Line-Signature` (fast-fail pre-check), dedupes
    `webhookEventId` via KV, and forwards `rawBody` unchanged to
    `https://andy770921-ai-agent.hf.space/webhook/line`.
-3. `openab-gateway` (Rust) re-verifies HMAC, generates an `event_id`, caches
-   `event_id → replyToken` for 50 s, and pushes the event over a loopback
-   WebSocket to `openab` core.
-4. `openab` spawns (or reuses) a `gemini --acp` subprocess for the LINE
-   userId's session. Gemini uses Playwright MCP / GitHub MCP as needed.
-5. The agent's text reply travels back the same path; the gateway uses LINE
-   Reply API while the `replyToken` is fresh and falls back to Push API.
-6. Image replies bypass the gateway: the agent runs `deliver-line-image.sh`,
-   which uploads to the KV image store via the Worker then POSTs the resulting
-   URL to LINE Push API directly using the `LINE_CHANNEL_ACCESS_TOKEN` exposed
-   via `openab.toml` `[agent].env`. One operation, one status.
+3. Hono server (`agent-runtime/src/server.ts`) re-verifies HMAC, calls
+   `runTurn()` which invokes the Mastra agent with the user's message.
+4. The Mastra agent has three parent-level tools: `task_browser` (Playwright
+   MCP subagent), `task_github` (GitHub MCP subagent), `send_image`
+   (deliver-line-image.sh). MCP tools are isolated in subagents so the
+   parent context stays small.
+5. The agent's text reply is sent via `replyOrPush()`: attempts LINE Reply
+   API (free, 50 s replyToken window), falls back to Push API (paid).
+6. Image replies: the `send_image` tool runs `deliver-line-image.sh`, which
+   uploads to the KV image store via the Worker then POSTs the resulting URL
+   to LINE Push API directly.
+
+No WebSockets. No OpenAB. Single Node.js process listening on `:7860`.
 
 ### Dashboard event flow
 
-- Gemini CLI writes JSON-line telemetry to `$GEMINI_TELEMETRY_OUTFILE`.
-- A Node sidecar inside the container tails the file and reshapes each event
-  to the `AgentEvent` shape (`shared/src/types/agent-events.ts`).
-- The sidecar serves `GET /events/stream` (SSE) + `/sessions` + history at
-  port 8081, auth-gated by `DASHBOARD_INGEST_TOKEN`.
+- The Hono server emits `AgentEvent`s to an in-process event bus
+  (`agent-runtime/src/observability/bus.ts`).
+- A ring buffer sink stores the last 200 events per session for history
+  queries.
+- `GET /events/stream` (SSE) fans out live events to connected dashboards,
+  auth-gated by `DASHBOARD_INGEST_TOKEN`.
 - The Cloudflare Worker proxies `/api/sessions/stream` etc. with a separate
   `DASHBOARD_TOKEN` bearer so a frontend-token leak doesn't grant container
   access.
@@ -90,12 +93,8 @@ npm run build:pages --workspace=frontend
 
 ### HF Spaces port routing
 
-HF Spaces only exposes port 7860. A reverse proxy (`hf-proxy.js`) routes:
-
-- `/webhook/*`, `/health` → `:8080` (openab-gateway)
-- everything else → `:8081` (Node sidecar)
-
-The proxy always starts — no env var flag needed.
+HF Spaces only exposes port 7860. The Hono server (`src/server.ts`) listens
+directly on `:7860` — no reverse proxy needed.
 
 ### Shared types
 
@@ -114,27 +113,11 @@ Each workspace has its own `.env.example`:
 - `edge/.dev.vars` — Cloudflare Worker secrets (`LINE_CHANNEL_SECRET`,
   `LINE_ALLOWED_USER_IDS`, `CF_UPLOAD_SECRET`, `DASHBOARD_INGEST_TOKEN`,
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
-- HF Space secrets — container env (LINE channel creds, `GEMINI_API_KEY`,
-  `GITHUB_TOKEN`, `CF_UPLOAD_SECRET`, `LANGFUSE_SECRET_KEY`,
-  `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL`, etc.). Set via
-  HF Space Settings → Repository secrets.
-- `agent-runtime/.env.example` — all container env vars with placeholders.
+- `agent-runtime/.env.example` — all container env vars with placeholders
+  (LINE creds, LLM provider keys, Supabase, Langfuse, CF integration).
+  Production values set via HF Space Settings → Repository secrets.
 
-The complete env-var table with who-reads-what is in
-`documents/FEAT-1/development/gemini-cli-tools.md` Step 6.
-
-## Upstream verification
-
-Before making non-trivial changes to `agent-runtime/`, read
-`documents/FEAT-1/development/openab-upstream-findings.md`. It documents
-five upstream truths that override the PRD where they disagree:
-
-1. `openab` and `openab-gateway` are **two separate binaries / crates**.
-2. OpenAB TOML uses **singular** `[gateway]` and `[agent]` (not `[gateways.line]` etc.).
-3. Hybrid Reply/Push is built into `openab-gateway`; we do NOT implement it.
-4. OpenAB **does not relay images**; the agent calls LINE Push API directly.
-5. Gemini CLI v0.41.x uses the **Policy Engine TOML** at `~/.gemini/policies/`,
-   not `tools.core` / `tools.exclude` / `tools.allowed` keys in `settings.json`.
+The complete env-var table is in `agent-runtime/.env.example`.
 
 ## Code style
 
@@ -149,10 +132,12 @@ five upstream truths that override the PRD where they disagree:
 Work is tracked in `documents/[TICKET-NUMBER]/`:
 
 ```
-documents/FEAT-1/    # original LINE agent build
-documents/FEAT-2/    # HF Spaces migration
-documents/FEAT-3/    # MCP env / Langfuse follow-ups
-documents/FIX-1/     # one-off fixes
+documents/FEAT-1/      # original LINE agent build (OpenAB + Gemini CLI — historical)
+documents/FEAT-2/      # HF Spaces migration
+documents/FEAT-3/      # MCP env / Langfuse follow-ups
+documents/FEAT-4/      # Mastra rewrite — removed OpenAB, single TS process
+documents/FIX-1/       # one-off fixes
+documents/FIX-2/       # Gemini tool routing fix (superseded by FEAT-4)
 documents/REFACTOR-1/  # deep-modules refactor (Worker + sidecar + frontend SSE)
 
 Each folder has:
@@ -163,28 +148,37 @@ Each folder has:
 `FEAT-*` = new product/feature work. `FIX-*` = bug fixes. `REFACTOR-*` =
 internal restructure with no user-visible behavior change.
 
-## Internal module organization (REFACTOR-1)
+## Internal module organization
 
 Deep modules are grouped under subfolders so the ports are obvious at a
 glance:
 
+**Edge Worker (`edge/`):**
 - `edge/src/line/` — LINE webhook ports (`signatureVerifier`,
   `webhookDedupStore`, `gatewayForwarder`, `blockedUserReplier`) + the
   `webhookHandler` factory that composes them.
 - `edge/src/ports/` — outbound adapters (`sidecarClient`, `imageStore`).
 - `edge/src/router.ts` — tiny path/method/CORS router used by `index.ts`.
-- `agent-runtime/scripts/lib/` — sidecar bus + sinks (`agentEventBus`,
-  `ringBufferSink`, `sseFanoutSink`, `langfuseSink`, `jsonLineDecoder`).
+
+**Agent runtime (`agent-runtime/src/`):**
+- `src/agent/` — Mastra agent core (`runTurn`, `composeSystem`, provider routing).
+- `src/line/` — LINE webhook handler, HMAC verifier, reply/push, replyToken store.
+- `src/mcp/` — MCP subagent dispatch (`parentTools`, `subagentRunner`, `mcpClients`).
+- `src/db/` — Supabase persistence (messages, memories, skills, agentConfig, writeQueue).
+- `src/memory/` — Session-end memory extraction pipeline (5-gate trigger).
+- `src/skills/` — Skill auto-creation pipeline.
+- `src/curator/` — Weekly curator cron (stale/archive/consolidate).
+- `src/observability/` — Event bus, ring buffer sink, SSE fan-out.
+- `src/ports/` — healthz, image store upload.
+
+**Frontend (`frontend/`):**
 - `frontend/src/lib/sse/` — `parseSseStream` (pure) +
   `reconnectingSseStream` (reconnect/heartbeat loop) consumed by
   `hooks/useEventStream`.
 
-When adding a new outbound dependency: add a port under
-`edge/src/ports/`. When adding a new observer to the sidecar event stream:
-add a sink under `agent-runtime/scripts/lib/` and register it in
-`healthz.js`. See `documents/REFACTOR-1/plans/prd.md` for the design
-rationale and `development/deep-modules-implementation.md` for the build
-order.
+When adding a new outbound dependency in edge: add a port under
+`edge/src/ports/`. When adding a new module to agent-runtime: create a new
+folder under `agent-runtime/src/` with a clear public interface.
 
 ## Custom slash commands
 
@@ -204,14 +198,15 @@ the ticket ID (e.g. `FEAT-1`).
 
 - **Cloudflare Worker**: `cd edge && wrangler deploy` (after the two KV
   namespaces `WEBHOOK_DEDUP` and `IMG_KV` are created and their IDs are pasted
-  into `edge/wrangler.toml`, plus the five Worker secrets are set via
-  `wrangler secret put` — see
-  `documents/FEAT-1/development/phase0-e2e-spike-runbook.md` §1).
+  into `edge/wrangler.toml`, plus the Worker secrets are set via
+  `wrangler secret put`).
 - **Dashboard**: `npm run pages-deploy --workspace=frontend` (deploys
   `frontend/out/` to Cloudflare Pages project `ai-agent-dashboard`).
 - **Container**: pushed to HF Spaces via GitHub Actions
   (`.github/workflows/hf-sync.yml`). The workflow syncs `agent-runtime/`
-  contents to the HF Space repo on every push to `main`.
+  contents to the HF Space repo on every push to `main`. The container
+  builds TypeScript, installs Playwright + Chromium, and starts a single
+  Node process on `:7860`.
 
-The Phase 0.3 e2e spike runbook (`documents/FEAT-1/development/phase0-e2e-spike-runbook.md`)
-documents the full deploy + verification sequence.
+See `documents/FEAT-4/development/cutover-execution.md` for the full
+cutover playbook.

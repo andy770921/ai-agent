@@ -1,6 +1,9 @@
 # PRD: Agent Runtime Rewrite (FEAT-4)
 
-> Status: Planning. Authored 2026-05-15. Owner: Andy.
+> Status: **In Development** (cutover phase). Authored 2026-05-15, updated 2026-05-19. Owner: Andy.
+> All Mastra `src/` code is written. Remaining work: Dockerfile rewrite,
+> entrypoint simplification, OpenAB file deletion, Supabase migration apply,
+> system prompt seed update.
 > Companion: [design-decisions.md](./design-decisions.md) — read first for
 > the architecture rationale and the alternatives that were rejected.
 
@@ -325,7 +328,7 @@ Explicitly **not** in FEAT-4:
 ## Status
 
 - [x] Planning (this doc)
-- [ ] In Development
+- [x] In Development — all `src/` Mastra code written; cutover in progress (2026-05-19)
 - [ ] Complete
 
 ## References
