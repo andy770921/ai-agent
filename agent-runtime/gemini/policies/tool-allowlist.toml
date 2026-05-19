@@ -24,12 +24,17 @@ decision = "deny"
 priority = 800
 
 [[rule]]
-toolName = "web_search"
+toolName = "google_web_search"
 decision = "deny"
 priority = 800
 
 [[rule]]
 toolName = "save_memory"
+decision = "deny"
+priority = 800
+
+[[rule]]
+toolName = "list_directory"
 decision = "deny"
 priority = 800
 
