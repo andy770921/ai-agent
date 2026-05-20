@@ -43,6 +43,15 @@ const port = Number(process.env.PORT ?? 7860);
 serve({ fetch: app.fetch, port });
 console.log(`agent-runtime listening on :${port}`);
 
+// Startup diagnostics — log MCP binary availability
+import { existsSync } from 'node:fs';
+const mcpBin = '/usr/local/lib/node_modules/@playwright/mcp/cli.js';
+const ghBin = '/usr/local/bin/github-mcp-server';
+if (process.platform === 'linux') {
+  console.log(`playwright-mcp: ${existsSync(mcpBin) ? 'OK' : 'MISSING'} (${mcpBin})`);
+  console.log(`github-mcp: ${existsSync(ghBin) ? 'OK' : 'MISSING'} (${ghBin})`);
+}
+
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, flushing write queue…');
   await flushQueue();

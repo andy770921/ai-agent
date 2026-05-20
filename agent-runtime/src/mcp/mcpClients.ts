@@ -2,17 +2,17 @@ import { MastraMCPClient } from '@mastra/mcp';
 
 // MastraMCPClient's `env` replaces the subprocess environment entirely.
 // Spread process.env as base so the subprocess inherits PATH, HOME, etc.
+//
+// In Docker (linux), use `node` + absolute path to cli.js to bypass all
+// npx/symlink/global-prefix issues. On macOS, use npx for local dev.
+const isDocker = process.platform === 'linux';
+
 export const playwrightMcp = new MastraMCPClient({
   name: 'playwright',
   server: {
-    // Use absolute path to the globally installed binary (npm install -g
-    // @playwright/mcp in Dockerfile). npx can't resolve it when running as
-    // USER node because the global prefix belongs to root.
-    command: process.platform === 'linux'
-      ? '/usr/local/bin/mcp-server-playwright'
-      : 'npx',
-    args: process.platform === 'linux'
-      ? ['--browser', 'chromium', '--headless']
+    command: isDocker ? 'node' : 'npx',
+    args: isDocker
+      ? ['/usr/local/lib/node_modules/@playwright/mcp/cli.js', '--browser', 'chromium', '--headless']
       : ['@playwright/mcp', '--browser', 'chromium', '--headless'],
     env: {
       ...process.env,
