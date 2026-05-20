@@ -13,7 +13,9 @@ FROM node:22-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+# --ignore-scripts: postinstall downloads Chromium (for local dev only);
+# in Docker, Chromium is installed globally above.
+RUN npm install --ignore-scripts
 
 COPY tsconfig.json ./
 COPY src/ src/
@@ -59,7 +61,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # --- App: production dependencies only ---
 WORKDIR /app
 COPY package.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --ignore-scripts
 
 # --- App: compiled TypeScript from build stage ---
 COPY --from=build /app/dist/ dist/
