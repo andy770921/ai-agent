@@ -91,9 +91,14 @@ export async function runSubagent(a: Args): Promise<string> {
 
 async function safeListTools(client: MastraMCPClient, mcpName: string) {
   try {
-    // getTools() exists on MastraMCPClient but TS can't resolve it due to
-    // duplicate @mastra/core versions in the dep tree. Runtime works fine.
-    return await (client as unknown as { getTools(): Promise<Record<string, unknown>> }).getTools();
+    // MastraMCPClient requires connect() before tools() can be called.
+    // connect() spawns the stdio subprocess; tools() returns the tool map.
+    const c = client as unknown as {
+      connect(): Promise<void>;
+      tools(): Promise<Record<string, unknown>>;
+    };
+    await c.connect();
+    return await c.tools();
   } catch (err) {
     console.warn(`[mcp] ${mcpName} not available: ${String(err)}`);
     return null;
