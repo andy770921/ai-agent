@@ -27,6 +27,7 @@ app.get('/sessions', sessionsHandler);
 app.get('/sessions/:id/history', sessionHistoryHandler);
 app.post('/img', imageUploadHandler);
 app.get('/healthz', healthzHandler);
+app.get('/', (c) => c.text('agent-runtime ok'));
 app.post('/admin/curator', curatorHandler);
 
 // Session-end pipelines
