@@ -1,7 +1,18 @@
 import type { Context } from 'hono';
 import { agentEventBus, type BusEvent } from './bus.js';
 import { getSessionHistory, listSessions } from './ringBufferSink.js';
-import type { AgentEvent, AgentEventBase } from '@repo/shared';
+// Inlined from @repo/shared — agent-runtime deploys standalone on HF Spaces
+// without access to the monorepo shared workspace.
+interface AgentEventBase {
+  sessionUserId: string;
+  ts: string;
+}
+type AgentEvent =
+  | (AgentEventBase & { type: 'message_in'; text: string })
+  | (AgentEventBase & { type: 'tool_call'; tool: string; args: unknown })
+  | (AgentEventBase & { type: 'tool_result'; tool: string; durationMs: number; ok: boolean; error?: string })
+  | (AgentEventBase & { type: 'message_out'; text: string; kind: 'text' | 'image'; imageUrl?: string })
+  | (AgentEventBase & { type: 'session_ended' });
 
 /** Map internal BusEvent → existing AgentEvent wire format for dashboard. */
 function toWireEvent(ev: BusEvent): AgentEvent {

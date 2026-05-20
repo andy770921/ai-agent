@@ -18,7 +18,6 @@
     "@mastra/core": "^0.10",
     "@mastra/mcp": "^0.3",
     "@playwright/mcp": "^0.0.30",
-    "@repo/shared": "*",
     "@supabase/supabase-js": "^2",
     "hono": "^4",
     "langfuse-vercel": "^3",
