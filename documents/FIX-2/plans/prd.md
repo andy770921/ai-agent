@@ -1,176 +1,194 @@
-# PRD: Gemini CLI Tool Routing — Model Ignores Playwright MCP
+# PRD: Playwright MCP Tool Routing — From Gemini CLI to Mastra
+
+> **Status: Superseded by FEAT-4.** FIX-2 was originally scoped as a
+> Gemini CLI config tweak.  During implementation, the root causes turned
+> out to be deeper than config — they required the FEAT-4 Mastra rewrite
+> to resolve.  This document now serves as the full troubleshooting record.
 
 ## Problem Statement
 
-The LINE agent (Gemini CLI running inside the HF Spaces container) has Playwright
-MCP tools configured and allowed, yet the model consistently ignores them.  When a
-user asks for a screenshot or any browser task, the model reaches for built-in tools
-(`web_fetch`, `google_web_search`, `run_shell_command`, `list_directory`) instead of
-the Playwright MCP tools (`browser_navigate`, `browser_take_screenshot`, etc.).
-
-This results in degraded user experience: the agent appears "incapable" of browser
-tasks despite having the correct tooling installed.
+The LINE agent cannot use Playwright MCP tools for browser tasks.  When a
+user asks for a screenshot, the agent replies "The browser tool is currently
+unavailable" instead of navigating and screenshotting.
 
 ## Root Cause Analysis
 
-Three independent issues combine to produce the observed behaviour:
+Investigation revealed **two layers** of issues: the original Gemini CLI
+layer (addressed by FEAT-4's removal of OpenAB) and a new Mastra MCP
+integration layer discovered during the FEAT-4 cutover.
 
-### 1. Policy Engine `deny` is ineffective in ACP mode
+### Layer 1: Gemini CLI + OpenAB (historical — removed by FEAT-4)
 
-Gemini CLI's Policy Engine (`~/.gemini/policies/tool-allowlist.toml`) sets `deny`
-rules for unwanted built-in tools.  However, in `--acp` mode (spawned by OpenAB),
-deny decisions are **not hard blocks**.  Instead they are forwarded as ACP permission
-prompts to the host (OpenAB), which **auto-approves every request** with
-`proceed_once`:
+Three independent issues combined:
 
+1. **Policy Engine `deny` ineffective in ACP mode.**  Gemini CLI's Policy
+   Engine sets `deny` rules for unwanted built-in tools.  In `--acp` mode
+   (spawned by OpenAB), deny decisions are forwarded as ACP permission
+   prompts.  OpenAB auto-approves every request with `proceed_once`:
+   ```
+   auto-respond permission title="pip list"
+     outcome={"outcome":{"optionId":"proceed_once","outcome":"selected"}}
+   ```
+   Evidence: `run_shell_command` (pip list, ls -la), `web_fetch`, and
+   `google_web_search` all executed despite deny rules.
+
+2. **Tool name mismatch in policy.**  Policy denied `web_search` but the
+   actual Gemini CLI tool is `google_web_search`.  Rule never matched.
+
+3. **Model prefers familiar built-in tools.**  The Gemini Flash model sees
+   all 30+ tool schemas (built-in + MCP) and defaults to built-in tools it
+   was trained on, ignoring MCP tools.
+
+**Resolution:** FEAT-4 removed OpenAB + Gemini CLI entirely.  The Mastra
+agent only exposes three parent tools (`task_browser`, `task_github`,
+`send_image`), eliminating tool confusion at the architecture level.
+
+### Layer 2: Mastra MCP Integration (discovered during FEAT-4 cutover)
+
+After the Mastra rewrite deployed, Playwright MCP still failed.  Five
+sequential issues were diagnosed and fixed:
+
+#### Issue 2a: `MastraMCPClient.getTools()` not a function
+
+**Symptom:** `[mcp] browser not available: TypeError: client.getTools is not
+a function`
+
+**Cause:** `MastraMCPClient` requires `connect()` to spawn the stdio
+subprocess before `tools()` can be called.  The code called `getTools()`
+directly on an unconnected client.
+
+**Fix:** Call `connect()` before `tools()` in `safeListTools()`.
+Commit: `70ddb85`.
+
+#### Issue 2b: MCP subprocess missing environment variables
+
+**Symptom:** `browser_install` tool called by LLM and times out.  MCP
+connects but Chromium not found.
+
+**Cause:** `MastraMCPClient`'s `env` field **replaces** the subprocess
+environment entirely.  The old code only passed `PLAYWRIGHT_BROWSERS_PATH`,
+missing `PATH`, `HOME`, and all other vars.  The Playwright MCP server
+couldn't locate Chromium at `/ms-playwright`.
+
+**Fix:** Spread `...process.env` as the base environment.
+Commit: `e47a3d8`.
+
+#### Issue 2c: @playwright/mcp version mismatch (local vs global)
+
+**Symptom:** LLM calls `browser_install` (which times out) instead of
+`browser_navigate`.  `browser_install` tool appears in tool list.
+
+**Cause:** `package.json` had `"@playwright/mcp": "^0.0.30"` which resolved
+to v0.0.75 in `node_modules`.  `npx` picked the local (newer) version
+instead of the globally installed v0.0.30.  The newer version expects a
+different Chromium revision than what was installed, so it exposed
+`browser_install` as a recovery tool.
+
+**Fix:** Removed `@playwright/mcp` from `package.json` (it's only used as a
+CLI, never imported as a library).  Commit: `a87806e`.
+
+**Local verification:** After fix, `browser_install` disappeared from tool
+list:
 ```
-auto-respond permission title="pip list"
-  outcome={"outcome":{"optionId":"proceed_once","outcome":"selected"}}
+Playwright OK: 23 tools, browser_navigate: true, browser_install: false
 ```
 
-Evidence from HF container logs confirms that `run_shell_command` (for `pip list`,
-`ls -la`, `command -v …`), `web_fetch`, and `google_web_search` all execute
-successfully despite policy deny rules.
+#### Issue 2d: `npx --no-install` can't find global package as USER node
 
-### 2. Tool name mismatch in policy
+**Symptom:** `npx canceled due to missing packages and no YES option:
+["@playwright/mcp@0.0.75"]`
 
-The policy file denies `web_search`:
+**Cause:** `npm install -g` runs as root during Docker build.  The app runs
+as `USER node`.  `npx --no-install` as the `node` user can't resolve
+packages in root's global prefix.
 
-```toml
-[[rule]]
-toolName = "web_search"
-decision = "deny"
-priority = 800
+**Fix:** Changed to use the binary symlink at
+`/usr/local/bin/mcp-server-playwright`.  Commit: `b34a3da`.
+
+#### Issue 2e: Binary symlink not resolving (suspected)
+
+**Symptom:** No MCP error in logs at all.  Agent replies "browser tool is
+currently unavailable" silently.
+
+**Cause:** The symlink at `/usr/local/bin/mcp-server-playwright` may not
+resolve correctly when running as `USER node`, or the binary name differs
+across npm versions.
+
+**Fix:** Use `node /usr/local/lib/node_modules/@playwright/mcp/cli.js`
+directly — bypasses all npx/symlink/global-prefix issues.  Added startup
+diagnostics that log whether the MCP binary exists.  Commit: `87a433f`.
+
+**Local verification:**
 ```
-
-But the actual Gemini CLI built-in tool is named `google_web_search`.  The rule
-never matches, so the tool is never even "denied" (not that deny would help — see
-issue 1).
-
-### 3. Model prefers familiar built-in tools over MCP tools
-
-The Gemini Flash model sees **all** tool schemas (built-in + MCP) in its context.
-With 30+ tools available, it defaults to the familiar built-in tools it was trained
-on (`web_fetch`, `run_shell_command`) rather than MCP tools it has less exposure to
-(`browser_navigate`, `browser_take_screenshot`).
-
-The current system prompt (`system.md`) contains only a single vague line:
-
+platform: darwin (will use npx for macOS)
+Successfully connected to MCP server
+OK: 23 tools, browser_navigate: true
 ```
-- For browser tasks (screenshot, fetch a page, click something): use the `playwright` MCP tools.
-```
-
-This is insufficient to override the model's built-in preference.
-
-### Contributing factor: `GEMINI_CLI_TRUST_WORKSPACE=true`
-
-The `openab.toml` agent env sets `GEMINI_CLI_TRUST_WORKSPACE=true`.  This may relax
-policy enforcement further.  Removing it could tighten security but may break Gemini
-CLI's workspace file access (e.g., reading `system.md`).  Noted for investigation
-but kept as-is for FIX-2 to limit blast radius.
-
-### Contributing factor: `sandboxNetworkAccess: true`
-
-The current `settings.json` has `sandboxNetworkAccess: true`, diverging from the
-FEAT-1 baseline (`false`).  This allows `run_shell_command` sandbox to make outbound
-HTTP calls.  Combined with the policy bypass, this increases the attack surface.
-Kept as-is for FIX-2 but flagged for future tightening.
 
 ## Solution Overview
 
-**FIX-2 is a partial, best-effort fix.**  The permanent solution is the FEAT-4
-Mastra rewrite, which will strip unwanted tool schemas from the model context
-entirely.  FIX-2 works within the constraints of the current OpenAB + Gemini CLI
-stack:
+FIX-2's original scope (system prompt + policy TOML tweaks) was **superseded
+by FEAT-4**, which solved the problem architecturally:
 
-1. **Strengthen the system prompt** — explicitly enumerate the Playwright tool names,
-   provide a concrete screenshot workflow, and explicitly prohibit the built-in
-   alternatives using numbered rules with consequence statements.
-2. **Fix the policy file** — correct tool name mismatches and add missing deny rules
-   so the policy is at least *correct* (even if not fully effective in ACP mode today).
-   This positions us for future Gemini CLI versions that may respect deny in ACP mode.
+| Approach | What it does | Status |
+|----------|-------------|--------|
+| FIX-2 original | Strengthen system prompt + fix policy TOML | Superseded — files deleted by FEAT-4 |
+| FEAT-4 | Remove OpenAB/Gemini CLI; use Mastra with 3 parent tools | Deployed |
+| FEAT-4 MCP fixes | Fix MCP client connect, env, version, binary path | 5 commits deployed |
 
-## User Stories
-
-1. As a LINE user, I want the agent to take a webpage screenshot when I ask, so that
-   I receive an actual image instead of a text-based workaround.
-2. As a LINE user, I want the agent to navigate and interact with web pages using
-   Playwright, so that it can perform browser-based tasks reliably.
-3. As an operator, I want the policy file to use correct tool names, so that if a
-   future Gemini CLI version hard-blocks denied tools in ACP mode, the rules take
-   effect immediately.
-
-## Implementation Decisions
-
-### Modules
-
-- **`gemini/system.md`** (system prompt): Add explicit Playwright tool list,
-  concrete workflow examples, and a "prohibited tools" section.
-- **`gemini/policies/tool-allowlist.toml`** (policy engine): Fix `web_search` →
-  `google_web_search`, add `list_directory` deny, add `read_file` / `edit_file`
-  deny rules for any other built-in filesystem tools the model might reach for.
-
-### Architecture
-
-No architectural changes.  This fix is entirely in configuration files (system
-prompt + policy TOML).  The permanent solution is the FEAT-4 Mastra rewrite, which
-will give us programmatic control over which tool schemas are sent to the model
-(stripping unwanted tools from context entirely, not just denying them at execution
-time).
-
-### Files Changed
+## Files Changed (final, cumulative)
 
 | File | Change |
 |------|--------|
-| `agent-runtime/gemini/system.md` | Rewrite `# Tools` section |
-| `agent-runtime/gemini/policies/tool-allowlist.toml` | Fix tool names + add deny rules |
+| `agent-runtime/src/mcp/subagentRunner.ts` | `connect()` before `tools()`; retry logic |
+| `agent-runtime/src/mcp/mcpClients.ts` | `...process.env`; `node` + absolute `cli.js` path on Linux |
+| `agent-runtime/package.json` | Removed `@playwright/mcp` dependency |
+| `agent-runtime/src/server.ts` | Added startup MCP diagnostics |
+| `agent-runtime/Dockerfile` | Removed Rust/OpenAB; global `@playwright/mcp@0.0.30` + Chromium |
+| `agent-runtime/gemini/` | Entire directory deleted (FEAT-4) |
+| `agent-runtime/config/openab.toml` | Deleted (FEAT-4) |
 
 ## Testing Strategy
 
+### Startup verification (HF logs)
+
+```
+agent-runtime listening on :7860
+playwright-mcp: OK (/usr/local/lib/node_modules/@playwright/mcp/cli.js)
+github-mcp: OK (/usr/local/bin/github-mcp-server)
+```
+
 ### Positive tests
 
-1. **Deploy to HF Spaces** and send a LINE message: "Please screenshot google.com
-   for me."
-2. **Verify in Langfuse** that the trace shows `browser_navigate` +
-   `browser_take_screenshot` tool calls (not `web_fetch` or `run_shell_command`).
-3. **Verify the LINE reply** contains an actual screenshot image delivered via
-   `deliver-line-image.sh`.
+1. Send LINE message: "Screenshot google.com" → expect image reply.
+2. Langfuse trace shows `task_browser` → subagent calls `browser_navigate` +
+   `browser_take_screenshot`.
 
 ### Negative tests
 
-4. Send: "Run `ls -la` for me." — agent should decline.
-5. Send: "Search the web for latest news." — agent should use `browser_navigate` to
-   a search engine, not `google_web_search`.
-6. Send: "Use web_fetch to get https://example.com" — agent should refuse and
-   suggest Playwright instead.
-7. Send: "Read the file /etc/passwd" — agent should refuse.
+3. Agent should never call `web_fetch`, `google_web_search`,
+   `run_shell_command`, or `browser_install`.
 
-### Langfuse verification
+### Local verification (run before deploy)
 
-Filter traces by tool name.  Expected: `browser_navigate`, `browser_take_screenshot`
-present.  Unexpected: `web_fetch`, `google_web_search`, `list_directory` absent.
+```bash
+env $(grep -v '^#' .env | grep -v '^$' | xargs) npx tsx -e '
+import { playwrightMcp } from "./src/mcp/mcpClients.ts";
+(async () => {
+  await (playwrightMcp as any).connect();
+  const tools = await (playwrightMcp as any).tools();
+  console.log(Object.keys(tools).length, "tools");
+  console.log("browser_navigate:", Object.keys(tools).includes("browser_navigate"));
+  await (playwrightMcp as any).disconnect();
+  process.exit(0);
+})();
+'
+```
 
-### Rollback plan
-
-If Playwright tools stop working after deployment:
-1. `git revert` the FIX-2 commit on `main`.
-2. HF Spaces auto-redeploys via `.github/workflows/hf-sync.yml`.
-3. Estimated rollback time: ~5 minutes.
-
-## Out of Scope
-
-- **Fixing OpenAB's auto-approve behaviour**: This is an upstream limitation.
-  OpenAB auto-responds `proceed_once` to all ACP permission prompts.  A proper fix
-  would require OpenAB to respect Gemini CLI policy decisions, which is outside our
-  control.
-- **Stripping tool schemas from model context**: The Policy Engine `deny` hides
-  the tool from the model in interactive mode but not in ACP mode.  Programmatic
-  schema stripping requires the FEAT-4 Mastra rewrite.
-- **Quota exhaustion errors**: The `gemini-3-flash-preview` daily quota limit is a
-  Google-side constraint unrelated to tool routing.
+Expected: `23 tools`, `browser_navigate: true`.
 
 ## Status
 
 - [x] Planning
-- [ ] In Development
-- [ ] Complete
+- [x] In Development (superseded by FEAT-4)
+- [ ] Complete — pending live verification of `87a433f`
