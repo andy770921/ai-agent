@@ -14,22 +14,27 @@ interface Args {
   systemHint: string;
 }
 
+// Cache connected tools per MCP client to avoid reconnecting every call.
+const toolsCache = new Map<string, Record<string, unknown>>();
+
 export async function runSubagent(a: Args): Promise<string> {
   const providerKey = await pickProvider(a.userId, 'main');
-  const tools = await safeListTools(a.mcpClient, a.taskName);
+  const tools = await getOrConnectTools(a.mcpClient, a.taskName);
   if (!tools) {
+    const msg = `${a.taskName} MCP unavailable in this environment`;
+    console.error(`[subagent] ${msg}`);
     agentEventBus.emit({
       type: 'tool_result',
       userId: a.userId,
       sessionId: a.sessionId,
       toolName: `task_${a.taskName}`,
       ok: false,
-      error: `${a.taskName} MCP unavailable in this environment`,
+      error: msg,
     });
     return JSON.stringify({
       ok: false,
       task: a.taskName,
-      reason: `${a.taskName} MCP unavailable — run "npm install" or rebuild the container image.`,
+      reason: `${a.taskName} MCP unavailable — rebuild the container image.`,
     });
   }
 
@@ -65,6 +70,7 @@ export async function runSubagent(a: Args): Promise<string> {
       });
       return softTruncate(result.text);
     } catch (err) {
+      console.error(`[subagent] task_${a.taskName} attempt ${attempt} failed:`, err);
       if (attempt >= 2) {
         agentEventBus.emit({
           type: 'tool_result',
@@ -89,18 +95,28 @@ export async function runSubagent(a: Args): Promise<string> {
   });
 }
 
-async function safeListTools(client: MastraMCPClient, mcpName: string) {
+/** Connect once and cache; reconnect on failure. */
+async function getOrConnectTools(
+  client: MastraMCPClient,
+  mcpName: string,
+): Promise<Record<string, unknown> | null> {
+  const cached = toolsCache.get(mcpName);
+  if (cached) return cached;
+
   try {
-    // MastraMCPClient requires connect() before tools() can be called.
-    // connect() spawns the stdio subprocess; tools() returns the tool map.
     const c = client as unknown as {
       connect(): Promise<void>;
+      disconnect(): Promise<void>;
       tools(): Promise<Record<string, unknown>>;
     };
     await c.connect();
-    return await c.tools();
+    const tools = await c.tools();
+    const count = Object.keys(tools).length;
+    console.log(`[mcp] ${mcpName} connected: ${count} tools`);
+    toolsCache.set(mcpName, tools);
+    return tools;
   } catch (err) {
-    console.warn(`[mcp] ${mcpName} not available: ${String(err)}`);
+    console.error(`[mcp] ${mcpName} connect failed:`, err);
     return null;
   }
 }

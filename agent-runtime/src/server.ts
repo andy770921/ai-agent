@@ -52,8 +52,13 @@ if (process.platform === 'linux') {
   console.log(`github-mcp: ${existsSync(ghBin) ? 'OK' : 'MISSING'} (${ghBin})`);
 }
 
+import { flushLangfuse, getLangfuse } from './observability/langfuse.js';
+
+// Initialize Langfuse at startup (logs enabled/disabled status)
+getLangfuse();
+
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, flushing write queue…');
-  await flushQueue();
+  console.log('SIGTERM received, flushing…');
+  await Promise.all([flushQueue(), flushLangfuse()]);
   process.exit(0);
 });

@@ -19,7 +19,7 @@
     "@mastra/mcp": "^0.3",
     "@supabase/supabase-js": "^2",
     "hono": "^4",
-    "langfuse-vercel": "^3",
+    "langfuse": "^3",
     "zod": "^3"
   },
   "devDependencies": {
