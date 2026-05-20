@@ -17,7 +17,6 @@
     "@hono/node-server": "^1",
     "@mastra/core": "^0.10",
     "@mastra/mcp": "^0.3",
-    "@playwright/mcp": "^0.0.30",
     "@supabase/supabase-js": "^2",
     "hono": "^4",
     "langfuse-vercel": "^3",

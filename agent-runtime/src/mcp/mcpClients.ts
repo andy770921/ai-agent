@@ -6,7 +6,7 @@ export const playwrightMcp = new MastraMCPClient({
   name: 'playwright',
   server: {
     command: 'npx',
-    args: ['@playwright/mcp', '--browser', 'chromium', '--headless'],
+    args: ['--no-install', '@playwright/mcp', '--browser', 'chromium', '--headless'],
     env: {
       ...process.env,
     } as Record<string, string>,
