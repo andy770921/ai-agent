@@ -5,8 +5,15 @@ import { MastraMCPClient } from '@mastra/mcp';
 export const playwrightMcp = new MastraMCPClient({
   name: 'playwright',
   server: {
-    command: 'npx',
-    args: ['--no-install', '@playwright/mcp', '--browser', 'chromium', '--headless'],
+    // Use absolute path to the globally installed binary (npm install -g
+    // @playwright/mcp in Dockerfile). npx can't resolve it when running as
+    // USER node because the global prefix belongs to root.
+    command: process.platform === 'linux'
+      ? '/usr/local/bin/mcp-server-playwright'
+      : 'npx',
+    args: process.platform === 'linux'
+      ? ['--browser', 'chromium', '--headless']
+      : ['@playwright/mcp', '--browser', 'chromium', '--headless'],
     env: {
       ...process.env,
     } as Record<string, string>,
