@@ -23,6 +23,7 @@
 | 2026-05-21 | `b114f4b` | MCP errors swallowed + reconnect every call | Tools cache + `console.error` + Langfuse SDK |
 | 2026-05-21 | `716de71` | `runtimeContext` never passed to agent | Pass `RuntimeContext` to `agent.generate()` + chmod |
 | 2026-05-21 | `588b600` | Zod v4 rejects all 25 Playwright tool schemas | Upgrade `@playwright/mcp` 0.0.30 → 0.0.75 |
+| 2026-05-21 | `d2552f3` | Quota errors produce vague user messages | Detect 429/quota at subagent + webhook levels |
 
 ## Issue Details
 
@@ -291,19 +292,44 @@ browser_navigate: true
 browser_install: false
 ```
 
+### 13. Quota errors produce vague user messages
+
+**Error:** User sees "The browser tool is currently unavailable" or "Sorry,
+something went wrong" when Gemini free-tier quota (20 req/day) is exhausted.
+
+**Root cause:** Two error paths lacked quota detection:
+- `subagentRunner.ts`: retried the subagent on quota error (wasting more
+  quota), then returned raw JSON that the parent LLM interpreted vaguely.
+- `webhookHandler.ts`: returned generic "something went wrong" for all
+  errors including 429/RESOURCE_EXHAUSTED.
+
+**Fix:** Detect quota errors via regex
+(`/quota|rate.?limit|RESOURCE_EXHAUSTED|429/i`) at both levels:
+- **Subagent:** skip retry entirely, return `userMessage: "LLM calling limit
+  exceeded for today."` — the parent LLM relays this to the user.
+- **Webhook handler:** if `runTurn()` itself throws a quota error, reply
+  "LLM calling limit exceeded for today. Please try again tomorrow."
+
+Commit: `d2552f3`.
+
+## Key Learnings (continued)
+
+9. **Detect quota errors early and skip retry.**  Retrying a 429 wastes the
+   remaining quota budget.  Return a clear user-facing message immediately.
+
 ## Current State
 
-All 12 issues fixed across 12 commits.  Pending live verification on HF
-Spaces that:
+All 13 issues fixed across 13 commits.
 
-1. Startup log shows:
+**Verified working (HF log 2026-05-21):**
 ```
 playwright-mcp: OK (/usr/local/lib/node_modules/@playwright/mcp/cli.js)
 github-mcp: OK (/usr/local/bin/github-mcp-server)
 [langfuse] enabled
-[mcp] browser connected: 23 tools
+[mcp] browser connected: 23 tools       ← MCP fully working
+[subagent] task_browser attempt 1...     ← subagent invoked correctly
+  Quota exceeded... limit: 20           ← Gemini free-tier limit (not a code bug)
 ```
 
-2. A "screenshot google.com" LINE message produces an actual image.
-
-3. Langfuse dashboard shows traces.
+**Pending:** A quota-free live test (wait for daily reset or switch to a paid
+model) to confirm end-to-end screenshot delivery via `send_image`.

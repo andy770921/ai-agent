@@ -171,6 +171,27 @@ browser_navigate: true
 browser_install: false
 ```
 
+#### Issue 2i: LLM quota errors produce vague user-facing messages
+
+**Symptom:** When Gemini free-tier quota (20 req/day) is exhausted, the user
+sees "The browser tool is currently unavailable" or "Sorry, something went
+wrong" — no indication it's a quota issue.
+
+**Cause:** Two error paths lacked quota detection:
+- `subagentRunner.ts` catch block: retried the subagent (wasting quota),
+  then returned a raw JSON error that the parent LLM interpreted vaguely.
+- `webhookHandler.ts` catch block: returned a generic "something went wrong"
+  for all errors including 429/RESOURCE_EXHAUSTED.
+
+**Fix:** Detect quota errors (`429`, `RESOURCE_EXHAUSTED`, `quota`, `rate
+limit`) at both levels:
+- **Subagent:** skip retry, return immediately with `userMessage: "LLM
+  calling limit exceeded for today."`
+- **Webhook handler:** reply "LLM calling limit exceeded for today. Please
+  try again tomorrow."
+
+Commit: `d2552f3`.
+
 ## Solution Overview
 
 FIX-2's original scope (system prompt + policy TOML tweaks) was **superseded
@@ -180,15 +201,16 @@ by FEAT-4**, which solved the problem architecturally:
 |----------|-------------|--------|
 | FIX-2 original | Strengthen system prompt + fix policy TOML | Superseded — files deleted by FEAT-4 |
 | FEAT-4 | Remove OpenAB/Gemini CLI; use Mastra with 3 parent tools | Deployed |
-| FEAT-4 MCP fixes | Fix connect, env, version, binary path, cache, runtimeContext, Zod v4 | 8 commits deployed |
+| FEAT-4 MCP fixes | Fix connect, env, version, binary, cache, runtimeContext, Zod v4, quota | 9 commits deployed |
 
 ## Files Changed (final, cumulative)
 
 | File | Change |
 |------|--------|
-| `agent-runtime/src/mcp/subagentRunner.ts` | `connect()` before `tools()`; tools cache; `console.error` in catch |
+| `agent-runtime/src/mcp/subagentRunner.ts` | `connect()` before `tools()`; tools cache; `console.error`; quota detection |
 | `agent-runtime/src/mcp/mcpClients.ts` | `...process.env`; `node` + absolute `cli.js` path on Linux |
 | `agent-runtime/src/agent/runTurn.ts` | Pass `RuntimeContext` (userId, sessionId) to `agent.generate()`; Langfuse trace |
+| `agent-runtime/src/line/webhookHandler.ts` | Quota error detection → user-friendly message |
 | `agent-runtime/src/observability/langfuse.ts` | New — Langfuse SDK singleton + flush |
 | `agent-runtime/package.json` | Removed `@playwright/mcp` + `@repo/shared`; `langfuse-vercel` → `langfuse` |
 | `agent-runtime/src/server.ts` | Startup MCP diagnostics + Langfuse init |
@@ -239,4 +261,4 @@ Expected: `23 tools`, `browser_navigate: true`.
 
 - [x] Planning
 - [x] In Development (superseded by FEAT-4)
-- [ ] Complete — pending live verification of `588b600` (Zod v4 fix)
+- [ ] Complete — MCP verified working (23 tools); pending quota-free live test
