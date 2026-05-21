@@ -1,4 +1,5 @@
 import { Agent, PROVIDERS } from './index.js';
+import { RuntimeContext } from '@mastra/core/di';
 import { getSystemPrompt } from './systemPrompt.js';
 import { pickProvider } from './providerRouting.js';
 import { loadRecentMessages } from '../db/messages.js';
@@ -61,7 +62,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     input: messages,
   });
 
-  const result = await agent.generate(messages, { maxSteps: 8 });
+  const runtimeContext = new RuntimeContext();
+  runtimeContext.set('userId', userId);
+  runtimeContext.set('sessionId', sessionId);
+
+  const result = await agent.generate(messages, { maxSteps: 8, runtimeContext });
 
   const toolCallCount = result.steps?.flatMap(
     (s: Record<string, unknown>) => (s.toolCalls as unknown[]) ?? [],

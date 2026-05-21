@@ -41,7 +41,8 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.30
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} --retry 3
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx --yes playwright install chromium \
- && chmod -R a+rX /ms-playwright
+ && chmod -R a+rX /ms-playwright \
+ && chmod -R a+rX /usr/local/lib/node_modules/@playwright
 
 # --- GitHub MCP server (Go binary release) ---
 ARG GH_MCP_VERSION=1.0.4
