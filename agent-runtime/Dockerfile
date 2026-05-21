@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # --- Playwright MCP + Chromium browser (pinned, downloaded at build time) ---
-ARG PLAYWRIGHT_MCP_VERSION=0.0.30
+ARG PLAYWRIGHT_MCP_VERSION=0.0.75
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} --retry 3
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx --yes playwright install chromium \
