@@ -70,7 +70,26 @@ export async function runSubagent(a: Args): Promise<string> {
       });
       return softTruncate(result.text);
     } catch (err) {
+      const errStr = String(err);
       console.error(`[subagent] task_${a.taskName} attempt ${attempt} failed:`, err);
+
+      // Quota errors: skip retry, return user-friendly message immediately
+      if (isQuotaError(errStr)) {
+        agentEventBus.emit({
+          type: 'tool_result',
+          userId: a.userId,
+          sessionId: a.sessionId,
+          toolName: `task_${a.taskName}`,
+          ok: false,
+          error: 'LLM quota exceeded',
+        });
+        return JSON.stringify({
+          ok: false,
+          task: a.taskName,
+          userMessage: 'LLM calling limit exceeded for today. Please try again tomorrow or ask the admin to switch to a paid model.',
+        });
+      }
+
       if (attempt >= 2) {
         agentEventBus.emit({
           type: 'tool_result',
@@ -78,11 +97,11 @@ export async function runSubagent(a: Args): Promise<string> {
           sessionId: a.sessionId,
           toolName: `task_${a.taskName}`,
           ok: false,
-          error: String(err),
+          error: errStr,
         });
         return JSON.stringify({
           ok: false,
-          reason: String(err),
+          reason: errStr,
           task: a.taskName,
         });
       }
@@ -93,6 +112,10 @@ export async function runSubagent(a: Args): Promise<string> {
     reason: 'exhausted retries',
     task: a.taskName,
   });
+}
+
+function isQuotaError(err: string): boolean {
+  return /quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(err);
 }
 
 /** Connect once and cache; reconnect on failure. */

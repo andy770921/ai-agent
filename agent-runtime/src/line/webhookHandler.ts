@@ -90,7 +90,12 @@ async function processEvents(events: LineEvent[]) {
       });
     } catch (e) {
       console.error('runTurn failed', e);
-      await replyOrPush(userId, 'Sorry, something went wrong. Please try again.');
+      const errStr = String(e);
+      const isQuota = /quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(errStr);
+      const msg = isQuota
+        ? 'LLM calling limit exceeded for today. Please try again tomorrow.'
+        : 'Sorry, something went wrong. Please try again.';
+      await replyOrPush(userId, msg);
       agentEventBus.emit({
         type: 'message_out',
         userId,
