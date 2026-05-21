@@ -20,6 +20,9 @@
 | 2026-05-20 | `a87806e` | `browser_install` tool exposed (version mismatch) | Remove `@playwright/mcp` from package.json |
 | 2026-05-20 | `b34a3da` | `npx --no-install` can't find global package | Use absolute binary path |
 | 2026-05-20 | `87a433f` | Binary symlink not resolving as USER node | Use `node cli.js` directly + startup diagnostics |
+| 2026-05-21 | `b114f4b` | MCP errors swallowed + reconnect every call | Tools cache + `console.error` + Langfuse SDK |
+| 2026-05-21 | `716de71` | `runtimeContext` never passed to agent | Pass `RuntimeContext` to `agent.generate()` + chmod |
+| 2026-05-21 | `588b600` | Zod v4 rejects all 25 Playwright tool schemas | Upgrade `@playwright/mcp` 0.0.30 → 0.0.75 |
 
 ## Issue Details
 
@@ -203,13 +206,104 @@ console.log(`playwright-mcp: ${existsSync(mcpBin) ? 'OK' : 'MISSING'}`);
 5. **Add startup diagnostics for critical binaries.**  A single
    `existsSync()` check at startup saves hours of log-chasing.
 
+6. **Cache MCP tools after first connect.**  Reconnecting per tool call is
+   slow and fragile.  Connect once, cache the tool map, reuse.
+
+7. **Always pass `runtimeContext` to `agent.generate()`.**  Without it,
+   `createTool` execute functions get `undefined` for `runtimeContext` and
+   all `runtimeContext.get()` calls fall through to empty defaults.
+
+8. **Watch for Zod v3/v4 conflicts in the MCP stack.**  `@mastra/mcp` →
+   `@modelcontextprotocol/sdk` → Zod v4.  Any MCP server returning schemas
+   without `type: "object"` at the `inputSchema` root will be rejected.
+   Upgrade the MCP server, not downgrade Zod.
+
+## Issue Details (continued)
+
+### 10. MCP errors swallowed + reconnect every call
+
+**Error:** Intermittent "browser tool unavailable" with no error in HF logs.
+
+**Root cause (errors):** `subagentRunner.ts` catch blocks emitted to the
+event bus but never called `console.error`.  Errors were invisible in logs.
+
+**Root cause (reconnect):** `safeListTools()` called `connect()` + `tools()`
+on every tool invocation, spawning a new MCP server process each time.
+
+**Fix:**
+- Cache tools after first `connect()` in a `Map<string, Record<string, unknown>>`
+- Add `console.error` to all catch blocks
+- Wire Langfuse SDK (`langfuse` direct, replacing `langfuse-vercel`)
+- Trace per LINE message with generation span
+
+Commit: `b114f4b`.
+
+### 11. `runtimeContext` never passed to agent.generate()
+
+**Error:** `parentTools.ts` receives empty `userId`/`sessionId`.
+
+**Root cause:** `runTurn()` called `agent.generate(messages, { maxSteps: 8 })`
+without a `runtimeContext` option.  Mastra's `Agent.generate()` creates a
+default empty `RuntimeContext` if none is provided.  Tools that call
+`runtimeContext.get('userId')` get `undefined`, falling through to `''`.
+
+**Fix:**
+```typescript
+const runtimeContext = new RuntimeContext();
+runtimeContext.set('userId', userId);
+runtimeContext.set('sessionId', sessionId);
+const result = await agent.generate(messages, { maxSteps: 8, runtimeContext });
+```
+
+Also `chmod -R a+rX /usr/local/lib/node_modules/@playwright` in Dockerfile
+so `USER node` can access the globally installed MCP modules.
+
+Commit: `716de71`.
+
+### 12. Zod v4 schema validation rejects all Playwright tools
+
+**Error:**
+```
+$ZodError: tools[*].inputSchema.type expected "object"
+  at zod/v4/core/parse.js
+  at @modelcontextprotocol/sdk/src/server/zod-compat.ts
+```
+
+All 25 Playwright tools rejected.  MCP connects but `tools()` throws.
+
+**Root cause:** `@mastra/mcp` → `@modelcontextprotocol/sdk` uses **Zod v4**.
+`@playwright/mcp@0.0.30` returns tool schemas where `inputSchema` lacks
+`type: "object"` at the root.  Valid under Zod v3, rejected by Zod v4.
+
+This is the exact Zod v3/v4 conflict predicted in FEAT-4
+`design-decisions.md` (open question #3).
+
+**Fix:** Upgrade `@playwright/mcp` from `0.0.30` → `0.0.75` in the
+Dockerfile.  The newer version returns Zod v4-compatible schemas.  Chromium
+is re-downloaded at build time to match 0.0.75's expected revision.
+
+Commit: `588b600`.
+
+**Verification:**
+```
+23 tools
+browser_navigate: true
+browser_install: false
+```
+
 ## Current State
 
-All fixes committed and pushed.  Pending live verification on HF Spaces that
-the startup log shows:
+All 12 issues fixed across 12 commits.  Pending live verification on HF
+Spaces that:
+
+1. Startup log shows:
 ```
 playwright-mcp: OK (/usr/local/lib/node_modules/@playwright/mcp/cli.js)
 github-mcp: OK (/usr/local/bin/github-mcp-server)
+[langfuse] enabled
+[mcp] browser connected: 23 tools
 ```
 
-And that a "screenshot google.com" LINE message produces an actual image.
+2. A "screenshot google.com" LINE message produces an actual image.
+
+3. Langfuse dashboard shows traces.

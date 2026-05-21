@@ -118,11 +118,57 @@ across npm versions.
 directly — bypasses all npx/symlink/global-prefix issues.  Added startup
 diagnostics that log whether the MCP binary exists.  Commit: `87a433f`.
 
+#### Issue 2f: MCP tools reconnect every call + errors swallowed
+
+**Symptom:** Intermittent "browser tool unavailable" with no error in HF
+logs.
+
+**Cause (errors):** `subagentRunner.ts` catch blocks emitted to the event
+bus but never called `console.error`.  Errors were invisible in HF logs.
+
+**Cause (reconnect):** `safeListTools()` called `connect()` + `tools()` on
+every tool invocation, spawning a new MCP server process each time.  Slow
+and fragile.
+
+**Fix:** (1) Cache tools after first `connect()` — reuse across calls.
+(2) Add `console.error` to all catch blocks.  (3) Wire Langfuse SDK for
+tracing (replaced `langfuse-vercel` with `langfuse` direct SDK).
+Commit: `b114f4b`.
+
+#### Issue 2g: `runtimeContext` never passed to agent.generate()
+
+**Symptom:** `parentTools.ts` receives empty `userId`/`sessionId` because
+`runtimeContext?.get('userId')` falls through to `''`.
+
+**Cause:** `runTurn()` called `agent.generate(messages, { maxSteps: 8 })`
+without passing `runtimeContext`.  Mastra's `Agent.generate()` accepts a
+`runtimeContext` option that tools access via `execute({ runtimeContext })`.
+
+**Fix:** Create `RuntimeContext` with userId/sessionId and pass to
+`agent.generate()`.  Also `chmod -R a+rX` on global `@playwright` modules
+for `USER node` access.  Commit: `716de71`.
+
+#### Issue 2h: Zod v4 schema validation rejects all Playwright tools
+
+**Symptom:** MCP connects successfully but `tools()` throws `$ZodError` —
+all 25 tools rejected with `inputSchema.type expected "object"`.
+
+**Cause:** `@mastra/mcp` depends on `@modelcontextprotocol/sdk` which uses
+**Zod v4**.  `@playwright/mcp@0.0.30` returns tool schemas where
+`inputSchema` lacks `type: "object"` at the root — valid under Zod v3 but
+rejected by Zod v4's strict validation.  This is the exact Zod v3/v4
+conflict predicted in FEAT-4 `design-decisions.md`.
+
+**Fix:** Upgrade `@playwright/mcp` from `0.0.30` → `0.0.75` in the
+Dockerfile global install.  The newer version returns Zod v4-compatible
+schemas.  Chromium is re-downloaded at build time to match the new version's
+expected revision.  Commit: `588b600`.
+
 **Local verification:**
 ```
-platform: darwin (will use npx for macOS)
-Successfully connected to MCP server
-OK: 23 tools, browser_navigate: true
+23 tools
+browser_navigate: true
+browser_install: false
 ```
 
 ## Solution Overview
@@ -134,17 +180,19 @@ by FEAT-4**, which solved the problem architecturally:
 |----------|-------------|--------|
 | FIX-2 original | Strengthen system prompt + fix policy TOML | Superseded — files deleted by FEAT-4 |
 | FEAT-4 | Remove OpenAB/Gemini CLI; use Mastra with 3 parent tools | Deployed |
-| FEAT-4 MCP fixes | Fix MCP client connect, env, version, binary path | 5 commits deployed |
+| FEAT-4 MCP fixes | Fix connect, env, version, binary path, cache, runtimeContext, Zod v4 | 8 commits deployed |
 
 ## Files Changed (final, cumulative)
 
 | File | Change |
 |------|--------|
-| `agent-runtime/src/mcp/subagentRunner.ts` | `connect()` before `tools()`; retry logic |
+| `agent-runtime/src/mcp/subagentRunner.ts` | `connect()` before `tools()`; tools cache; `console.error` in catch |
 | `agent-runtime/src/mcp/mcpClients.ts` | `...process.env`; `node` + absolute `cli.js` path on Linux |
-| `agent-runtime/package.json` | Removed `@playwright/mcp` dependency |
-| `agent-runtime/src/server.ts` | Added startup MCP diagnostics |
-| `agent-runtime/Dockerfile` | Removed Rust/OpenAB; global `@playwright/mcp@0.0.30` + Chromium |
+| `agent-runtime/src/agent/runTurn.ts` | Pass `RuntimeContext` (userId, sessionId) to `agent.generate()`; Langfuse trace |
+| `agent-runtime/src/observability/langfuse.ts` | New — Langfuse SDK singleton + flush |
+| `agent-runtime/package.json` | Removed `@playwright/mcp` + `@repo/shared`; `langfuse-vercel` → `langfuse` |
+| `agent-runtime/src/server.ts` | Startup MCP diagnostics + Langfuse init |
+| `agent-runtime/Dockerfile` | Removed Rust/OpenAB; `@playwright/mcp@0.0.75` + Chromium; chmod |
 | `agent-runtime/gemini/` | Entire directory deleted (FEAT-4) |
 | `agent-runtime/config/openab.toml` | Deleted (FEAT-4) |
 
@@ -191,4 +239,4 @@ Expected: `23 tools`, `browser_navigate: true`.
 
 - [x] Planning
 - [x] In Development (superseded by FEAT-4)
-- [ ] Complete — pending live verification of `87a433f`
+- [ ] Complete — pending live verification of `588b600` (Zod v4 fix)
