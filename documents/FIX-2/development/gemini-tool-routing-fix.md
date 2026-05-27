@@ -25,7 +25,8 @@
 | 2026-05-21 | `588b600` | Zod v4 rejects all 25 Playwright tool schemas | Upgrade `@playwright/mcp` 0.0.30 → 0.0.75 |
 | 2026-05-21 | `d2552f3` | Quota errors produce vague user messages | Detect 429/quota at subagent + webhook levels |
 | 2026-05-27 | `417ef40` | Subagent tool errors hidden by LLM paraphrase | Log `result.steps` toolCalls/Results to stdout |
-| 2026-05-27 | _this commit_ | EACCES on `/ms-playwright/mcp-chrome-for-testing-*` | `chmod a+rwX /ms-playwright` in Dockerfile |
+| 2026-05-27 | `c9c7ad2` | EACCES on `/ms-playwright/mcp-chrome-for-testing-*` | `chmod a+rwX /ms-playwright` in Dockerfile |
+| 2026-05-27 | _this commit_ | `Browser "chrome-for-testing" is not installed` | Install via MCP's bundled `playwright-core` |
 
 ## Issue Details
 
@@ -370,6 +371,88 @@ Alternative `chown -R node:node /ms-playwright` works too but adds a line.
 **Verification:** After the fix, the same `[subagent:browser]` log line
 should show `browser_navigate` succeeding (no `isError: true`).
 
+### 15. `Browser "chrome-for-testing" is not installed` after the chmod fix
+
+**Error (visible only with the subagent logging from `417ef40`):**
+```
+[subagent:browser] step 0 result browser_navigate {"content":[{"type":"text",
+  "text":"### Error\nError: Browser \"chrome-for-testing\" is not installed.
+  Run `npx @playwright/mcp install-browser chrome-for-testing` to install"}],
+  "isError":true}
+```
+
+The EACCES from issue 14 was gone — the chmod worked — but the next
+launch attempt failed because no chrome-for-testing binary was present
+at the path MCP looked for.
+
+**Initial misdiagnosis (worth recording):** The error message suggests
+running `npx @playwright/mcp install-browser chrome-for-testing`. We
+applied that command verbatim to the Dockerfile without verifying it
+existed.  No `install-browser` subcommand is documented in the
+`@playwright/mcp` README, and Microsoft's own
+[v0.0.75 Dockerfile](https://github.com/microsoft/playwright-mcp/blob/v0.0.75/Dockerfile)
+uses `npx -y playwright-core install --no-shell chromium` — a different
+command entirely.  The MCP error string is misleading; verifying against
+upstream's reference Dockerfile is the safer path. (Compare issue 12 in
+upstream Playwright #40862, which documents MCP misattributing
+unrelated failures to "browser not installed".)
+
+**Root cause:** Two compounding issues:
+
+1. **Playwright 1.57 renamed the chromium build to Chrome-for-Testing.**
+   Per the
+   [v1.57 release notes](https://playwright.dev/docs/release-notes#version-157),
+   "Playwright now runs on Chrome for Testing rather than Chromium.
+   Headed mode uses `chrome`; headless mode uses `chrome-headless-shell`."
+   The user-facing browser name `chromium` is preserved, but the binary
+   downloaded into `PLAYWRIGHT_BROWSERS_PATH` is now a Chrome-for-Testing
+   distribution, and the channel-name strings that surface in errors
+   refer to "chrome-for-testing".
+
+2. **Our Dockerfile installed browsers with the wrong Playwright
+   version.**  The original line was
+   `RUN npx --yes playwright install chromium`, which makes `npx --yes`
+   download the *latest* `playwright` from npm — *not* the
+   `playwright-core@1.61.0-alpha-1778188671000` pinned by
+   `@playwright/mcp@0.0.75`.  The browser revision shipped by the latest
+   Playwright differs from what MCP's bundled playwright-core expects.
+   Result: a chrome-for-testing binary exists under `/ms-playwright/`,
+   but at the wrong revision path, so MCP's launch lookup misses it.
+
+This was previously latent (the older version probably installed the
+same revision as MCP's bundled core by coincidence) and only surfaced
+after the chmod let us reach the launch step.
+
+**Fix:** Install browsers using the playwright-core that ships *with*
+`@playwright/mcp` so the version matches by construction:
+
+```dockerfile
+RUN cd /usr/local/lib/node_modules/@playwright/mcp \
+ && npx --yes playwright-core install --no-shell chromium
+```
+
+`cd` puts npx's cwd inside MCP's package directory, so it resolves
+`playwright-core` from `./node_modules/.bin/` (MCP's pinned version)
+instead of downloading the latest from npm.  This is the verified
+pattern used by [microsoft/playwright-mcp's v0.0.75 Dockerfile](https://github.com/microsoft/playwright-mcp/blob/v0.0.75/Dockerfile).
+
+`--no-shell` skips the chrome-headless-shell binary (the legacy headless
+variant);  MCP's `--headless` mode uses the full chrome-for-testing
+build, so the shell is redundant disk usage.
+
+**Latent issues observed but not yet addressed:**
+
+Microsoft's reference Dockerfile differs from ours in two more ways
+that are unrelated to issue 15 but should be evaluated independently:
+
+- `WORKDIR /home/node` in their runtime stage — MCP may need a writable
+  cwd to create default output directories.  Our `WORKDIR /app` is
+  owned by root and writable only because of the global chmod.  If MCP
+  ever writes to cwd by default, this could regress.
+- `--no-sandbox` flag on the MCP CLI — required when running Chromium
+  as non-root without a kernel sandbox set up.  Our setup currently
+  works without it (we have no surfaced symptom), so deferring.
+
 ## Key Learnings (continued)
 
 9. **Detect quota errors early and skip retry.**  Retrying a 429 wastes the
@@ -390,9 +473,25 @@ should show `browser_navigate` succeeding (no `isError: true`).
     that every directory it writes to at runtime is writable by the non-root
     container user — not just readable.
 
+12. **Trust upstream's reference Dockerfile over error-message hints.**
+    MCP error strings frequently suggest commands that do not actually
+    exist (issue 15: a suggested `install-browser` subcommand has no
+    matching code path).  When a runtime error proposes a fix, cross-check
+    against the project's own Dockerfile / CI config tagged to the exact
+    version you are running, *before* applying it to production.
+
+13. **`npx --yes <pkg>` ignores nested node_modules.**  `npx --yes
+    playwright install` downloads the latest `playwright` from npm rather
+    than resolving the version already on disk under
+    `node_modules/<somewhere>`.  When a tool re-uses a pinned helper
+    (e.g. `playwright-core` bundled inside `@playwright/mcp`), the
+    pinned helper must be invoked from a cwd where npx finds it locally
+    — usually by `cd`-ing into the host package's directory first, or by
+    invoking the bin's absolute path.
+
 ## Current State
 
-All 14 issues fixed across 15 commits.
+All 15 issues fixed across 16 commits.
 
 **Verified working (HF log 2026-05-21):**
 ```
@@ -404,13 +503,22 @@ github-mcp: OK (/usr/local/bin/github-mcp-server)
   Quota exceeded... limit: 20           ← Gemini free-tier limit (not a code bug)
 ```
 
-**Surfaced after subagent step logging (HF log 2026-05-27):**
+**Surfaced after subagent step logging (HF log 2026-05-27, before issue 14 fix):**
 ```
 [subagent:browser] step 0 call browser_navigate {"url":"https://www.google.com"}
 [subagent:browser] step 0 result browser_navigate {... EACCES /ms-playwright/...}
 ```
-Diagnosed as issue 14, fixed by chmod in this commit.
+Diagnosed as issue 14, fixed by chmod (`c9c7ad2`).
+
+**Surfaced after issue 14 fix (HF log 2026-05-27, before this commit):**
+```
+[subagent:browser] step 0 result browser_navigate {...
+  Error: Browser "chrome-for-testing" is not installed. ...}
+```
+Diagnosed as issue 15 (Playwright 1.57 chromium → chrome-for-testing
+rename + `npx --yes playwright` version drift), fixed by switching to
+MCP's bundled `playwright-core` in this commit.
 
 **Pending:** Live re-test after HF Space rebuild to confirm
 `browser_navigate` succeeds and end-to-end screenshot delivery via
-`send_image` works without quota errors.
+`send_image` works.

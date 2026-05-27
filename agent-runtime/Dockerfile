@@ -40,10 +40,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG PLAYWRIGHT_MCP_VERSION=0.0.75
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} --retry 3
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-# Playwright MCP 0.0.75+ creates per-session cache dirs under
-# PLAYWRIGHT_BROWSERS_PATH (e.g. /ms-playwright/mcp-chrome-for-testing-<hash>),
-# so the path must be writable by the non-root `node` user — not just readable.
-RUN npx --yes playwright install chromium \
+# Install Chromium using the playwright-core that ships *with*
+# @playwright/mcp, not a fresh `npx playwright`. Playwright 1.57 switched
+# the "chromium" channel to Chrome-for-Testing builds, and
+# @playwright/mcp@0.0.75 pins playwright-core@1.61.0-alpha-1778188671000,
+# which expects a specific browser revision under
+# PLAYWRIGHT_BROWSERS_PATH. A `npx --yes playwright install chromium`
+# resolves to the latest playwright on npm and can drop a mismatched
+# revision, leaving MCP unable to locate the binary at launch
+# ("Browser 'chrome-for-testing' is not installed").
+#
+# `cd`-ing into the MCP package directory makes npx resolve
+# playwright-core from ./node_modules/.bin/, pinning it to MCP's exact
+# version. This mirrors the official microsoft/playwright-mcp Dockerfile
+# at https://github.com/microsoft/playwright-mcp/blob/v0.0.75/Dockerfile
+# `--no-shell` skips the chrome-headless-shell binary; MCP's --headless
+# mode uses the full chrome-for-testing build instead.
+#
+# Also: MCP creates per-session cache dirs (e.g.
+# /ms-playwright/mcp-chrome-for-testing-<hash>) at navigation time, so
+# PLAYWRIGHT_BROWSERS_PATH must be writable by the non-root `node` user —
+# not just readable.
+RUN cd /usr/local/lib/node_modules/@playwright/mcp \
+ && npx --yes playwright-core install --no-shell chromium \
  && chmod -R a+rwX /ms-playwright \
  && chmod -R a+rX /usr/local/lib/node_modules/@playwright
 
