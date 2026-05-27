@@ -40,8 +40,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG PLAYWRIGHT_MCP_VERSION=0.0.75
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} --retry 3
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Playwright MCP 0.0.75+ creates per-session cache dirs under
+# PLAYWRIGHT_BROWSERS_PATH (e.g. /ms-playwright/mcp-chrome-for-testing-<hash>),
+# so the path must be writable by the non-root `node` user — not just readable.
 RUN npx --yes playwright install chromium \
- && chmod -R a+rX /ms-playwright \
+ && chmod -R a+rwX /ms-playwright \
  && chmod -R a+rX /usr/local/lib/node_modules/@playwright
 
 # --- GitHub MCP server (Go binary release) ---

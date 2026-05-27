@@ -24,6 +24,8 @@
 | 2026-05-21 | `716de71` | `runtimeContext` never passed to agent | Pass `RuntimeContext` to `agent.generate()` + chmod |
 | 2026-05-21 | `588b600` | Zod v4 rejects all 25 Playwright tool schemas | Upgrade `@playwright/mcp` 0.0.30 → 0.0.75 |
 | 2026-05-21 | `d2552f3` | Quota errors produce vague user messages | Detect 429/quota at subagent + webhook levels |
+| 2026-05-27 | `417ef40` | Subagent tool errors hidden by LLM paraphrase | Log `result.steps` toolCalls/Results to stdout |
+| 2026-05-27 | _this commit_ | EACCES on `/ms-playwright/mcp-chrome-for-testing-*` | `chmod a+rwX /ms-playwright` in Dockerfile |
 
 ## Issue Details
 
@@ -312,14 +314,85 @@ something went wrong" when Gemini free-tier quota (20 req/day) is exhausted.
 
 Commit: `d2552f3`.
 
+### 14. EACCES on `PLAYWRIGHT_BROWSERS_PATH` after upgrading to MCP 0.0.75
+
+**Error (as reported to the user):** "I am sorry, I was unable to screenshot
+the Google homepage. The browser environment encountered a permission error,
+preventing it from creating necessary directories."
+
+**Real error (visible only after adding subagent step logging):**
+```
+[subagent:browser] step 0 call browser_navigate {"url":"https://www.google.com"}
+[subagent:browser] step 0 result browser_navigate {"content":[{"type":"text",
+  "text":"### Error\nError: EACCES: permission denied,
+  mkdir '/ms-playwright/mcp-chrome-for-testing-f53b52a'"}],"isError":true}
+```
+
+**Diagnostic gap — why this took two commits to fix:**
+`runSubagent()` catches exceptions from `subagent.generate()` and logs them
+via `console.error`, but Mastra's `Agent.generate()` does **not** throw when
+a sub-tool returns `isError: true`.  Playwright MCP returns the EACCES as a
+tool result payload, the subagent's LLM reads it and paraphrases ("permission
+error... creating necessary directories") into `result.text`, and the parent
+agent forwards that paraphrase to the user.  Outwardly: `ok: true`,
+`toolCallCount: 1`, no stderr, no Langfuse error.  The raw EACCES is hidden.
+
+The first commit (`417ef40`) added `logSubagentSteps()` in
+`subagentRunner.ts` to dump `result.steps[*].toolCalls` and
+`result.steps[*].toolResults` to stdout after every successful subagent run.
+This made the EACCES visible on the next request.
+
+**Root cause:** Playwright MCP 0.0.75 — introduced in commit `588b600`
+(issue 12) — creates per-session cache directories under
+`PLAYWRIGHT_BROWSERS_PATH` (e.g. `/ms-playwright/mcp-chrome-for-testing-<hash>`)
+at navigation time, not at install time.  The Dockerfile set
+`chmod -R a+rX /ms-playwright` (read + traverse), which is sufficient to
+*launch* the pre-installed Chromium but not to *create new subdirectories*.
+Since the container runs as `USER node` and `/ms-playwright` is root-owned,
+`mkdir` of the per-session cache fails with EACCES.
+
+This is a latent regression from the 0.0.30 → 0.0.75 upgrade: 0.0.30 did
+not create per-session dirs in `PLAYWRIGHT_BROWSERS_PATH`, so `a+rX` was
+sufficient.
+
+**Fix:** One-character change in the Dockerfile:
+```dockerfile
+- && chmod -R a+rX /ms-playwright \
++ && chmod -R a+rwX /ms-playwright \
+```
+`a+rwX` grants read+write to all and execute only on directories /
+already-executable files — so the directory becomes writable but harmless
+data files don't gain a spurious execute bit.
+
+Single-tenant container; world-write on the browser cache is acceptable.
+Alternative `chown -R node:node /ms-playwright` works too but adds a line.
+
+**Verification:** After the fix, the same `[subagent:browser]` log line
+should show `browser_navigate` succeeding (no `isError: true`).
+
 ## Key Learnings (continued)
 
 9. **Detect quota errors early and skip retry.**  Retrying a 429 wastes the
    remaining quota budget.  Return a clear user-facing message immediately.
 
+10. **Subagent tool errors are invisible by default.**  Mastra's
+    `Agent.generate()` only throws on infrastructure failures — a tool that
+    returns `isError: true` is treated as a successful step, and the LLM is
+    free to paraphrase the error into a soft natural-language reply.  Always
+    instrument `result.steps[*].toolCalls` / `toolResults` to stdout (or
+    Langfuse child spans) so raw MCP/tool payloads survive the LLM's
+    summarisation.  Without this, even `console.error` and Langfuse traces
+    will be silent.
+
+11. **MCP version bumps can change runtime filesystem layout.**  Playwright
+    MCP 0.0.75 moved per-session cache from a transient location into
+    `PLAYWRIGHT_BROWSERS_PATH`.  Whenever upgrading an MCP server, re-check
+    that every directory it writes to at runtime is writable by the non-root
+    container user — not just readable.
+
 ## Current State
 
-All 13 issues fixed across 13 commits.
+All 14 issues fixed across 15 commits.
 
 **Verified working (HF log 2026-05-21):**
 ```
@@ -331,5 +404,13 @@ github-mcp: OK (/usr/local/bin/github-mcp-server)
   Quota exceeded... limit: 20           ← Gemini free-tier limit (not a code bug)
 ```
 
-**Pending:** A quota-free live test (wait for daily reset or switch to a paid
-model) to confirm end-to-end screenshot delivery via `send_image`.
+**Surfaced after subagent step logging (HF log 2026-05-27):**
+```
+[subagent:browser] step 0 call browser_navigate {"url":"https://www.google.com"}
+[subagent:browser] step 0 result browser_navigate {... EACCES /ms-playwright/...}
+```
+Diagnosed as issue 14, fixed by chmod in this commit.
+
+**Pending:** Live re-test after HF Space rebuild to confirm
+`browser_navigate` succeeds and end-to-end screenshot delivery via
+`send_image` works without quota errors.
