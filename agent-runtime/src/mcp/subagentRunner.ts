@@ -61,6 +61,7 @@ export async function runSubagent(a: Args): Promise<string> {
         [{ role: 'user', content: a.prompt }],
         { maxSteps: 12 },
       );
+      logSubagentSteps(a.taskName, result);
       agentEventBus.emit({
         type: 'tool_result',
         userId: a.userId,
@@ -116,6 +117,33 @@ export async function runSubagent(a: Args): Promise<string> {
 
 function isQuotaError(err: string): boolean {
   return /quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(err);
+}
+
+/**
+ * Surface subagent tool interactions. Mastra's `steps` carries the raw
+ * tool_call / tool_result payloads that the LLM otherwise paraphrases away
+ * in its final text, hiding real MCP / Playwright errors from operators.
+ */
+function logSubagentSteps(taskName: string, result: unknown): void {
+  try {
+    const steps = (result as { steps?: Array<Record<string, any>> }).steps ?? [];
+    for (const [i, step] of steps.entries()) {
+      for (const tc of (step.toolCalls as Array<Record<string, any>>) ?? []) {
+        console.log(
+          `[subagent:${taskName}] step ${i} call ${tc.toolName}`,
+          JSON.stringify(tc.args ?? {}).slice(0, 400),
+        );
+      }
+      for (const tr of (step.toolResults as Array<Record<string, any>>) ?? []) {
+        console.log(
+          `[subagent:${taskName}] step ${i} result ${tr.toolName}`,
+          JSON.stringify(tr.result ?? tr).slice(0, 800),
+        );
+      }
+    }
+  } catch (logErr) {
+    console.warn(`[subagent:${taskName}] step logging failed:`, logErr);
+  }
 }
 
 /** Connect once and cache; reconnect on failure. */
