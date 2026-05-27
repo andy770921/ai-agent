@@ -15,4 +15,6 @@ set -eu
 echo "===== Application Startup at $(date '+%Y-%m-%d %H:%M:%S') ====="
 
 # ===== Start the single Node process ======================================
-exec node --enable-source-maps dist/server.js
+# Absolute path: container's WORKDIR is /home/node so the runtime cwd is
+# writable for MCP, but the app code lives at /app.
+exec node --enable-source-maps /app/dist/server.js

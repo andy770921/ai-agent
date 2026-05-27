@@ -26,7 +26,8 @@
 | 2026-05-21 | `d2552f3` | Quota errors produce vague user messages | Detect 429/quota at subagent + webhook levels |
 | 2026-05-27 | `417ef40` | Subagent tool errors hidden by LLM paraphrase | Log `result.steps` toolCalls/Results to stdout |
 | 2026-05-27 | `c9c7ad2` | EACCES on `/ms-playwright/mcp-chrome-for-testing-*` | `chmod a+rwX /ms-playwright` in Dockerfile |
-| 2026-05-27 | _this commit_ | `Browser "chrome-for-testing" is not installed` | Install via MCP's bundled `playwright-core` |
+| 2026-05-27 | `0d366fd` | `Browser "chrome-for-testing" is not installed` | Install via MCP's bundled `playwright-core` |
+| 2026-05-27 | _this commit_ | Three review-driven hardenings on top of `0d366fd` | Direct `node cli.js` invocation + `WORKDIR /home/node` + dev script parity |
 
 ## Issue Details
 
@@ -423,8 +424,9 @@ This was previously latent (the older version probably installed the
 same revision as MCP's bundled core by coincidence) and only surfaced
 after the chmod let us reach the launch step.
 
-**Fix:** Install browsers using the playwright-core that ships *with*
-`@playwright/mcp` so the version matches by construction:
+**Fix (initial in `0d366fd`):** Install browsers using the playwright-core
+that ships *with* `@playwright/mcp` so the version matches by
+construction:
 
 ```dockerfile
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
@@ -439,6 +441,64 @@ pattern used by [microsoft/playwright-mcp's v0.0.75 Dockerfile](https://github.c
 `--no-shell` skips the chrome-headless-shell binary (the legacy headless
 variant);  MCP's `--headless` mode uses the full chrome-for-testing
 build, so the shell is redundant disk usage.
+
+**Fix (hardened in follow-up):** Three parallel subagent reviews of
+`0d366fd` flagged additional concerns:
+
+1. `npx --yes` silently falls back to the npm registry if the nested
+   `./node_modules/.bin/playwright-core` symlink ever disappears (npm
+   layout change, hoist behavior, etc.). The version-skew bug would
+   recur silently instead of failing the build loudly.
+2. `WORKDIR /app` at runtime is root-owned and only writable because of
+   the global chmod. The same latency pattern as issue 14 (`a+rX`
+   working until MCP needed to `mkdir`) is dormant here: if MCP ever
+   writes to cwd by default, EACCES returns.
+3. The dev-only `agent-runtime/scripts/install-mcp-deps.cjs` postinstall
+   hook still ran `npx playwright install chromium`, drifting from the
+   Docker pattern and exposing local devs to the same version skew.
+
+Applied in the follow-up commit:
+
+```dockerfile
+RUN node /usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.js \
+      install --no-shell chromium
+…
+USER node
+WORKDIR /home/node          # was /app
+```
+
+```shell
+# agent-runtime/scripts/entrypoint.sh
+exec node --enable-source-maps /app/dist/server.js   # was dist/server.js
+```
+
+```js
+// agent-runtime/scripts/install-mcp-deps.cjs
+run('npx --yes playwright-core install --no-shell chromium', ...);
+```
+
+Direct `node cli.js` removes npx from the chain — if the nested module
+path is ever wrong, the build fails immediately with a clear "Cannot
+find module" instead of a silent registry download. `WORKDIR /home/node`
+pre-empts the latent cwd-writability trap. `entrypoint.sh` uses an
+absolute path for `dist/server.js` so the cwd change is decoupled from
+where the app code lives. The dev script switches to `playwright-core`
+to match the Docker verb; full version-pinning locally is documented
+as a known limitation (devs without Docker hit the same skew, but the
+postinstall has a graceful fallback and a `PLAYWRIGHT_SKIP_BROWSER_INSTALL`
+escape hatch).
+
+**Still deferred (worth tracking):**
+- `--no-sandbox` flag on the MCP CLI in `agent-runtime/src/mcp/mcpClients.ts`
+  (Microsoft's reference passes it). Currently no surfaced symptom in our
+  HF Spaces single-tenant container, but documented expected failure:
+  Chromium exits immediately with no useful stderr if the kernel sandbox
+  isn't available.
+- Long-term: migrate to `FROM mcr.microsoft.com/playwright/mcp:v0.0.75`
+  as the runtime base. Eliminates the entire class of bugs in issues
+  12–15 by inheriting upstream's verified browser install. Trades our
+  `node:22-bookworm-slim` standardization for a registry dependency;
+  worth its own design discussion separately.
 
 **Latent issues observed but not yet addressed:**
 
@@ -486,12 +546,20 @@ that are unrelated to issue 15 but should be evaluated independently:
     `node_modules/<somewhere>`.  When a tool re-uses a pinned helper
     (e.g. `playwright-core` bundled inside `@playwright/mcp`), the
     pinned helper must be invoked from a cwd where npx finds it locally
-    — usually by `cd`-ing into the host package's directory first, or by
-    invoking the bin's absolute path.
+    — and even then, prefer the bin's absolute path: `node …/cli.js …`
+    fails loudly when the path is wrong, whereas `npx --yes` silently
+    re-downloads from the registry, masking the regression.
+
+14. **Run multi-agent review on infra changes before pushing.**  Three
+    parallel subagent reviews (build correctness, strategy, collateral
+    scan) caught two material issues that the implementer missed:
+    the silent-fallback hole in `npx --yes`, and the latent cwd-writability
+    trap that would have recurred as issue 16.  Cost: ~one minute of
+    elapsed time. Benefit: one fewer deploy cycle.
 
 ## Current State
 
-All 15 issues fixed across 16 commits.
+All 15 issues fixed across 17 commits (16 main + 1 review-driven hardening).
 
 **Verified working (HF log 2026-05-21):**
 ```

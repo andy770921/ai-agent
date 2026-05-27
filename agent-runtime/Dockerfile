@@ -50,10 +50,17 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # revision, leaving MCP unable to locate the binary at launch
 # ("Browser 'chrome-for-testing' is not installed").
 #
-# `cd`-ing into the MCP package directory makes npx resolve
-# playwright-core from ./node_modules/.bin/, pinning it to MCP's exact
-# version. This mirrors the official microsoft/playwright-mcp Dockerfile
-# at https://github.com/microsoft/playwright-mcp/blob/v0.0.75/Dockerfile
+# We invoke playwright-core directly via its absolute path. Using
+# `cd … && npx --yes playwright-core …` would also work because npx
+# resolves from cwd's node_modules, BUT `npx --yes` silently falls back
+# to the npm registry if the nested bin link disappears (e.g. layout
+# change in a future npm version), reintroducing the version-skew bug
+# without warning. Direct `node cli.js` removes npx from the chain —
+# any future regression fails the build loudly instead.
+#
+# The microsoft/playwright-mcp v0.0.75 Dockerfile uses the npx form
+# from a workspace where playwright-core is a top-level dep:
+# https://github.com/microsoft/playwright-mcp/blob/v0.0.75/Dockerfile
 # `--no-shell` skips the chrome-headless-shell binary; MCP's --headless
 # mode uses the full chrome-for-testing build instead.
 #
@@ -61,8 +68,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # /ms-playwright/mcp-chrome-for-testing-<hash>) at navigation time, so
 # PLAYWRIGHT_BROWSERS_PATH must be writable by the non-root `node` user —
 # not just readable.
-RUN cd /usr/local/lib/node_modules/@playwright/mcp \
- && npx --yes playwright-core install --no-shell chromium \
+RUN node /usr/local/lib/node_modules/@playwright/mcp/node_modules/playwright-core/cli.js \
+      install --no-shell chromium \
  && chmod -R a+rwX /ms-playwright \
  && chmod -R a+rX /usr/local/lib/node_modules/@playwright
 
@@ -105,5 +112,10 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
     CMD curl -fsS http://127.0.0.1:7860/healthz || exit 1
 
 USER node
-WORKDIR /app
+# Runtime cwd lives in node's home so MCP can create per-session default
+# output directories without needing /app to be writable. The app code
+# is referenced via absolute paths in entrypoint.sh, so cwd is decoupled
+# from where dist/ was COPYed. Mirrors microsoft/playwright-mcp's
+# v0.0.75 Dockerfile.
+WORKDIR /home/node
 ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]
