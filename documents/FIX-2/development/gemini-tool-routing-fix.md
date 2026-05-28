@@ -27,7 +27,8 @@
 | 2026-05-27 | `417ef40` | Subagent tool errors hidden by LLM paraphrase | Log `result.steps` toolCalls/Results to stdout |
 | 2026-05-27 | `c9c7ad2` | EACCES on `/ms-playwright/mcp-chrome-for-testing-*` | `chmod a+rwX /ms-playwright` in Dockerfile |
 | 2026-05-27 | `0d366fd` | `Browser "chrome-for-testing" is not installed` | Install via MCP's bundled `playwright-core` |
-| 2026-05-27 | _this commit_ | Three review-driven hardenings on top of `0d366fd` | Direct `node cli.js` invocation + `WORKDIR /home/node` + dev script parity |
+| 2026-05-27 | `021e5e2` | Three review-driven hardenings on top of `0d366fd` | Direct `node cli.js` invocation + `WORKDIR /home/node` + dev script parity |
+| 2026-05-28 | _this commit_ | `File access denied: /tmp/...png is outside allowed roots` | Point screenshot path to `/home/node/.playwright-mcp/` in subagent prompt |
 
 ## Issue Details
 
@@ -500,18 +501,58 @@ escape hatch).
   `node:22-bookworm-slim` standardization for a registry dependency;
   worth its own design discussion separately.
 
-**Latent issues observed but not yet addressed:**
+**Latent issues observed but not yet addressed** (note: `WORKDIR /home/node`
+was subsequently applied in `021e5e2` after a multi-agent review):
 
-Microsoft's reference Dockerfile differs from ours in two more ways
-that are unrelated to issue 15 but should be evaluated independently:
-
-- `WORKDIR /home/node` in their runtime stage — MCP may need a writable
-  cwd to create default output directories.  Our `WORKDIR /app` is
-  owned by root and writable only because of the global chmod.  If MCP
-  ever writes to cwd by default, this could regress.
 - `--no-sandbox` flag on the MCP CLI — required when running Chromium
   as non-root without a kernel sandbox set up.  Our setup currently
   works without it (we have no surfaced symptom), so deferring.
+
+### 16. `File access denied: outside allowed roots` on screenshot save
+
+**Error (in subagent step log):**
+```
+[subagent:browser] step 0 result browser_navigate {...Page Title: Google...}
+[subagent:browser] step 1 call browser_take_screenshot {"filename":"/tmp/google_homepage.png"}
+[subagent:browser] step 1 result browser_take_screenshot {... Error: File access
+  denied: /tmp/google_homepage.png is outside allowed roots.
+  Allowed roots: /home/node/.playwright-mcp, /home/node}
+```
+
+`browser_navigate` finally succeeded after issue 15's hardening.  The
+next failure was at the screenshot-save step.
+
+**Root cause:** Playwright MCP 0.0.75 enforces an "allowed roots"
+sandbox on file writes.  Default roots are `<cwd>` and
+`<cwd>/.playwright-mcp/`.  The previous `parentTools.ts` systemHint
+instructed the subagent to *"Save screenshots to /tmp/"*.  `/tmp/` is
+not under the allowed roots, so the write was rejected.
+
+This was effectively dormant before issue 15 was fixed — we never
+reached the save step.  After issue 15, the `WORKDIR /home/node`
+change in `021e5e2` made `/home/node` and `/home/node/.playwright-mcp/`
+the writable area.  The systemHint still pointed at the old `/tmp/`.
+
+The error path also incidentally confirms `WORKDIR /home/node` took
+effect: the allowed roots derive from cwd, and the log shows
+`/home/node/...` rather than `/app/...`.
+
+**Fix:** Update [`agent-runtime/src/mcp/parentTools.ts`](../../../agent-runtime/src/mcp/parentTools.ts)
+`taskBrowserTool` systemHint to point at the allowed root and
+explicitly call out that other paths will be rejected:
+
+```ts
+systemHint:
+  'You are a headless-browser specialist. Use Playwright MCP tools to fulfil the task. ' +
+  'When saving screenshots or other files, write to /home/node/.playwright-mcp/<name>.png. ' +
+  'Playwright MCP only allows writes under /home/node and /home/node/.playwright-mcp — ' +
+  '/tmp and other paths will be rejected with "File access denied".',
+```
+
+No Dockerfile / infra changes — the allowed roots are derived from
+the new `WORKDIR`.  `send_image`'s `deliver-line-image.sh` runs as the
+same `node` user and reads PNGs by absolute path, so it can read from
+`/home/node/.playwright-mcp/` without change.
 
 ## Key Learnings (continued)
 
@@ -559,7 +600,7 @@ that are unrelated to issue 15 but should be evaluated independently:
 
 ## Current State
 
-All 15 issues fixed across 17 commits (16 main + 1 review-driven hardening).
+All 16 issues fixed across 18 commits.
 
 **Verified working (HF log 2026-05-21):**
 ```

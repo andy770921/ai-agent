@@ -26,7 +26,10 @@ export const taskBrowserTool = createTool({
       mcpClient: playwrightMcp,
       prompt: context.task,
       systemHint:
-        'You are a headless-browser specialist. Use Playwright MCP tools to fulfil the task. Save screenshots to /tmp/.',
+        'You are a headless-browser specialist. Use Playwright MCP tools to fulfil the task. ' +
+        'When saving screenshots or other files, write to /home/node/.playwright-mcp/<name>.png. ' +
+        'Playwright MCP only allows writes under /home/node and /home/node/.playwright-mcp — ' +
+        '/tmp and other paths will be rejected with "File access denied".',
     });
   },
 });
