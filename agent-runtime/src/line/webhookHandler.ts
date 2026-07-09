@@ -52,12 +52,6 @@ async function processEvents(events: LineEvent[]) {
       text: ev.message.text,
     });
 
-    appendUserMessage({
-      userId,
-      sessionId,
-      content: ev.message.text,
-    });
-
     try {
       const result = await runTurn({
         userId,
@@ -65,6 +59,14 @@ async function processEvents(events: LineEvent[]) {
         userMessage: ev.message.text,
       });
 
+      // Persist the exchange only after runTurn has loaded history — appending
+      // the user message earlier would feed it to the model twice (once as the
+      // last history entry, once as the current turn message).
+      appendUserMessage({
+        userId,
+        sessionId,
+        content: ev.message.text,
+      });
       appendAssistantMessage({
         userId,
         sessionId,
@@ -83,6 +85,8 @@ async function processEvents(events: LineEvent[]) {
       });
     } catch (e) {
       console.error('runTurn failed', e);
+      // Record the user message even on failure so the next turn keeps context.
+      appendUserMessage({ userId, sessionId, content: ev.message.text });
       const errStr = String(e);
       const isQuota = /quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(errStr);
       const msg = isQuota

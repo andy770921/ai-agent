@@ -43,7 +43,12 @@ key="${uuid}.${ext}"
 image_url="${CF_IMG_BASE_URL}/img/${key}"
 
 # === 1. Upload to Worker KV ===
+# --retry-all-errors + --retry-connrefused make curl retry transient TLS /
+# connection failures (e.g. SSL_ERROR_SYSCALL / HTTP 000), which are otherwise
+# surfaced to the user as "unable to send the image" on a single network blip.
 upload_status=$(curl -sS -o /tmp/deliver-upload.out -w '%{http_code}' \
+  --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+  --connect-timeout 10 --max-time 60 \
   -X PUT \
   -H "Authorization: Bearer ${CF_UPLOAD_SECRET}" \
   -H "Content-Type: ${ct}" \
@@ -61,8 +66,11 @@ case "${upload_status}" in
 esac
 
 # === 2. Push to LINE ===
+# Safe to retry: X-Line-Retry-Key makes the push idempotent on LINE's side.
 retry_key="$(cat /proc/sys/kernel/random/uuid)"
 push_status=$(curl -sS -o /tmp/deliver-push.out -w '%{http_code}' \
+  --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
+  --connect-timeout 10 --max-time 30 \
   -X POST https://api.line.me/v2/bot/message/push \
   -H "Authorization: Bearer ${LINE_CHANNEL_ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
