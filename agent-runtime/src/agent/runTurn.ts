@@ -2,9 +2,9 @@ import { Agent, PROVIDERS } from './index.js';
 import { RuntimeContext } from '@mastra/core/di';
 import { getSystemPrompt } from './systemPrompt.js';
 import { pickProvider } from './providerRouting.js';
-import { loadRecentMessages } from '../db/messages.js';
-import { findRelevantMemories } from '../db/memories.js';
-import { findRelevantSkills } from '../db/skills.js';
+import { loadRecentMessages, type StoredMessage } from '../store/messageStore.js';
+import { findRelevantMemories } from '../store/memoryStore.js';
+import { findRelevantSkills } from '../store/skillStore.js';
 import { composeSystem } from './composeSystem.js';
 import { taskBrowserTool, taskGithubTool, sendImageTool } from '../mcp/parentTools.js';
 import { getLangfuse } from '../observability/langfuse.js';
@@ -42,10 +42,7 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
     tools: { sendImageTool, taskBrowserTool, taskGithubTool },
   });
 
-  const messages = [
-    ...history.map(toAiMessage),
-    { role: 'user' as const, content: userMessage },
-  ];
+  const messages = [...history.map(toAiMessage), { role: 'user' as const, content: userMessage }];
 
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
@@ -68,9 +65,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
   const result = await agent.generate(messages, { maxSteps: 8, runtimeContext });
 
-  const toolCallCount = result.steps?.flatMap(
-    (s: Record<string, unknown>) => (s.toolCalls as unknown[]) ?? [],
-  ).length ?? 0;
+  const toolCallCount =
+    result.steps?.flatMap((s: Record<string, unknown>) => (s.toolCalls as unknown[]) ?? [])
+      .length ?? 0;
 
   generation?.end({ output: result.text, metadata: { toolCallCount } });
   trace?.update({ output: result.text });
@@ -82,9 +79,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   };
 }
 
-function toAiMessage(row: Record<string, unknown>) {
-  const role = row.role as string;
-  const content = (row.content as { text?: string })?.text ?? '';
-  if (role === 'assistant') return { role: 'assistant' as const, content };
+function toAiMessage(row: StoredMessage) {
+  const content = row.content?.text ?? '';
+  if (row.role === 'assistant') return { role: 'assistant' as const, content };
   return { role: 'user' as const, content };
 }

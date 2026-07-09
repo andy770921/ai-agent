@@ -9,8 +9,7 @@ async function call(path: string, body: unknown) {
     },
     body: JSON.stringify(body),
   });
-  if (!r.ok)
-    throw new Error(`LINE ${path} ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`LINE ${path} ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
@@ -20,11 +19,7 @@ export const lineReply = (replyToken: string, text: string) =>
 export const linePush = (to: string, text: string) =>
   call('push', { to, messages: [{ type: 'text', text }] });
 
-export const linePushImage = (
-  to: string,
-  originalContentUrl: string,
-  previewImageUrl: string,
-) =>
+export const linePushImage = (to: string, originalContentUrl: string, previewImageUrl: string) =>
   call('push', {
     to,
     messages: [{ type: 'image', originalContentUrl, previewImageUrl }],

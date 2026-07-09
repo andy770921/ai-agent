@@ -26,26 +26,30 @@ export function EventRow({ event }: Props) {
     case 'message_in':
       return (
         <div style={{ borderLeft: '4px solid #2e7d32', paddingLeft: 8, marginBottom: 6 }}>
-          <small>{fmtTs(event.ts)} · {userLink} ›</small>
+          <small>
+            {fmtTs(event.ts)} · {userLink} ›
+          </small>
           <div>{event.text}</div>
         </div>
       );
     case 'tool_call':
       return (
         <div style={{ borderLeft: '4px solid #1565c0', paddingLeft: 8, marginBottom: 6 }}>
-          <small>{fmtTs(event.ts)} · {userLink} · tool</small>
+          <small>
+            {fmtTs(event.ts)} · {userLink} · tool
+          </small>
           <div>
             <code>{event.tool}</code>{' '}
-            <code style={{ color: '#555' }}>
-              {JSON.stringify(event.args).slice(0, 120)}
-            </code>
+            <code style={{ color: '#555' }}>{JSON.stringify(event.args).slice(0, 120)}</code>
           </div>
         </div>
       );
     case 'tool_result':
       return (
         <div style={{ borderLeft: '4px solid #1565c0', paddingLeft: 8, marginBottom: 6 }}>
-          <small>{fmtTs(event.ts)} · {userLink} · result</small>
+          <small>
+            {fmtTs(event.ts)} · {userLink} · result
+          </small>
           <div>
             <code>{event.tool}</code>{' '}
             {event.ok ? <span>ok</span> : <span style={{ color: 'crimson' }}>error</span>}{' '}
@@ -57,15 +61,13 @@ export function EventRow({ event }: Props) {
     case 'message_out':
       return (
         <div style={{ borderLeft: '4px solid #ed6c02', paddingLeft: 8, marginBottom: 6 }}>
-          <small>{fmtTs(event.ts)} · {userLink} ‹</small>
+          <small>
+            {fmtTs(event.ts)} · {userLink} ‹
+          </small>
           <div>{event.text}</div>
           {event.kind === 'image' && event.imageUrl && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={event.imageUrl}
-              alt="agent reply"
-              style={{ maxWidth: 240, marginTop: 4 }}
-            />
+            <img src={event.imageUrl} alt="agent reply" style={{ maxWidth: 240, marginTop: 4 }} />
           )}
         </div>
       );

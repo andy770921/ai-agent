@@ -101,29 +101,27 @@ describe('reconnectingSseStream', () => {
   it('cancels and reconnects when no data arrives within heartbeatTimeoutMs', async () => {
     const ctrl = new AbortController();
     let connectCount = 0;
-    const fetchImpl = jest
-      .fn<Promise<Response>, [string, RequestInit]>()
-      .mockImplementation(() => {
-        connectCount++;
-        if (connectCount === 1) {
-          // First connection: a stream that connects but never produces frames.
-          // The watchdog must cancel this body for the iterator to advance.
-          const silent = new ReadableStream<Uint8Array>({
-            pull() {
-              /* never enqueue, never close */
-            },
-          });
-          return Promise.resolve(new Response(silent, { status: 200 }));
-        }
-        // Second connection: close immediately and abort the loop.
-        ctrl.abort();
-        const ended = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.close();
+    const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>().mockImplementation(() => {
+      connectCount++;
+      if (connectCount === 1) {
+        // First connection: a stream that connects but never produces frames.
+        // The watchdog must cancel this body for the iterator to advance.
+        const silent = new ReadableStream<Uint8Array>({
+          pull() {
+            /* never enqueue, never close */
           },
         });
-        return Promise.resolve(new Response(ended, { status: 200 }));
+        return Promise.resolve(new Response(silent, { status: 200 }));
+      }
+      // Second connection: close immediately and abort the loop.
+      ctrl.abort();
+      const ended = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.close();
+        },
       });
+      return Promise.resolve(new Response(ended, { status: 200 }));
+    });
 
     const seen: StreamYield[] = [];
     for await (const frame of reconnectingSseStream({

@@ -1,4 +1,4 @@
-import { getAgentConfig } from '../db/agentConfig.js';
+import { getAgentConfig } from '../config/agentConfig.js';
 
 let cached: { value: string; loadedAt: number } | null = null;
 const TTL_MS = 60_000;

@@ -14,7 +14,7 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  ignorePatterns: ['node_modules/', 'dist/', 'build/', 'coverage/', '.next/'],
+  ignorePatterns: ['node_modules/', 'dist/', 'build/', 'coverage/', '.next/', 'next-env.d.ts'],
   overrides: [
     // TypeScript files
     {
@@ -27,6 +27,16 @@ module.exports = {
         '@typescript-eslint/explicit-function-return-type': 'off',
         '@typescript-eslint/explicit-module-boundary-types': 'off',
         '@typescript-eslint/no-explicit-any': 'off',
+        // Honor the `_`-prefix convention already used for intentionally-unused
+        // params (e.g. the Cloudflare Worker `scheduled(_event, env, _ctx)` signature).
+        '@typescript-eslint/no-unused-vars': [
+          'error',
+          {
+            argsIgnorePattern: '^_',
+            varsIgnorePattern: '^_',
+            caughtErrorsIgnorePattern: '^_',
+          },
+        ],
       },
     },
     // Next.js frontend

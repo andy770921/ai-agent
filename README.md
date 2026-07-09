@@ -14,7 +14,7 @@ LINE Platform ──▶ Cloudflare Worker (edge/)  ──▶  HF Spaces containe
                                                        ├─ task_browser (Playwright MCP)
                                                        ├─ task_github  (GitHub MCP)
                                                        └─ send_image   (LINE Push)
-                                                     • Supabase Postgres (persistence)
+                                                     • In-process stores (no external DB)
                                                      • Langfuse (observability)
                               ▲
                               │ EventSource + REST
@@ -73,8 +73,12 @@ and where it has to be set.
 | `OPENAI_API_KEY`            | https://platform.openai.com/api-keys (optional — only if using GPT-4o)                               | HF Space secret                                                 |
 | `GITHUB_TOKEN`              | https://github.com/settings/tokens?type=beta — fine-grained PAT with **read** on all repos           | HF Space secret                                                 |
 | `LINE_ALLOWED_USER_IDS`     | Capture `source.userId` from logs; comma-separated list (empty = allow all)                           | HF Space secret                                                 |
-| `SUPABASE_URL`              | Supabase project → Settings → API → Project URL                                                      | HF Space secret                                                 |
-| `SUPABASE_SERVICE_KEY`      | Supabase project → Settings → API → `service_role` key                                               | HF Space secret                                                 |
+
+> Since FEAT-5 there is no Supabase / external database. Chat history,
+> memories, skills, and the agent config all live in-process (see
+> `agent-runtime/src/store/` and `src/config/`) and reset when the container
+> restarts. The system prompt and default model are hardcoded constants in
+> `src/config/agentConfig.ts`.
 
 ### 2. Self-generated tokens (random strings, ≥32 chars recommended)
 
@@ -85,7 +89,6 @@ Generate each one independently — for example with `openssl rand -hex 32`.
 | `CF_UPLOAD_SECRET`       | Bearer the container uses when `PUT`ing images to the Worker's `/img/*` route    | **Both** HF Space secret and the `edge/` Worker (must match)     |
 | `DASHBOARD_INGEST_TOKEN` | Bearer the Worker sends when proxying `/events/stream` + `/sessions`             | **Both** HF Space secret and the `edge/` Worker (must match)     |
 | `DASHBOARD_TOKEN`        | Bearer the dashboard frontend sends on every `/api/*` Worker call                | `edge/` Worker only                                              |
-| `CURATOR_TOKEN`          | Bearer the edge Worker sends on weekly `/admin/curator` cron                     | **Both** HF Space secret and the `edge/` Worker (must match)     |
 
 ### 3. Observability tokens (optional — Langfuse)
 
@@ -118,13 +121,12 @@ If these are not set, the agent runs without Langfuse (no error).
 
 1. **Cloudflare**: create KV namespaces; `wrangler secret put` for
    each Worker secret; `wrangler deploy` from `edge/`.
-2. **Supabase**: apply migrations from `agent-runtime/supabase/migrations/`.
-3. **HF Spaces**: set all env vars as HF Space secrets;
+2. **HF Spaces**: set all env vars as HF Space secrets;
    push `agent-runtime/` contents to the Space via GitHub Actions or manually.
    The container builds TypeScript and listens on `:7860`.
-4. **LINE Console**: point the Messaging API webhook at
+3. **LINE Console**: point the Messaging API webhook at
    `https://<worker>.workers.dev/line/webhook` and click Verify.
-5. **Cloudflare Pages**: `npm run pages-deploy --workspace=frontend`.
+4. **Cloudflare Pages**: `npm run pages-deploy --workspace=frontend`.
 
 See `documents/FEAT-4/development/cutover-execution.md` for the full
 cutover playbook.
@@ -148,7 +150,6 @@ Fixed cost: **$0/mo** — fully free-tier stack.
 - **Hugging Face Spaces** (Docker, `cpu-basic`) — $0. 2 vCPU / 16 GB RAM.
 - **Cloudflare Workers** (free plan) — $0. 100,000 requests/day.
 - **Cloudflare Pages** — $0. Static export hosting, unlimited requests.
-- **Supabase** (free plan) — $0. 500 MB database, 50k auth users.
 
 ## Claude Code commands
 

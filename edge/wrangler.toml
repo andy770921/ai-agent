@@ -33,15 +33,9 @@ SIDECAR_BASE_URL = "https://andy770921-ai-agent.hf.space"
 # Origin that hosts the dashboard frontend (Cloudflare Pages).
 DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 
-# === Cron trigger: curator (FEAT-4) ===
-# Sunday 18:00 UTC = Sunday 02:00 UTC+8
-[triggers]
-crons = ["0 18 * * SUN"]
-
 # === Secrets (set via `wrangler secret put <NAME>`) ===
 # LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge
 # LINE_ALLOWED_USER_IDS  — comma-separated allowlist (edge fast-fail)
 # CF_UPLOAD_SECRET       — bearer for /img PUT (container -> Worker)
 # DASHBOARD_INGEST_TOKEN — bearer for /events/stream + /sessions (Worker -> sidecar)
 # DASHBOARD_TOKEN        — bearer the frontend sends on /api/*
-# CURATOR_TOKEN          — bearer for /admin/curator (Worker cron -> agent-runtime)

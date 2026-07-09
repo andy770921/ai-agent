@@ -17,7 +17,3 @@ CF_UPLOAD_SECRET=YOUR_CF_UPLOAD_SECRET_HERE
 # --- Dashboard frontend <-> Worker ---
 # Bearer the dashboard pastes into /dashboard/login and sends as Authorization.
 DASHBOARD_TOKEN=YOUR_DASHBOARD_TOKEN_HERE
-
-# --- Curator cron (Worker -> agent-runtime POST /admin/curator) ---
-# Must match the agent-runtime's CURATOR_TOKEN exactly.
-CURATOR_TOKEN=YOUR_CURATOR_TOKEN_HERE

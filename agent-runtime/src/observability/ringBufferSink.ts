@@ -17,10 +17,7 @@ agentEventBus.on((ev) => {
   }
 });
 
-export function getSessionHistory(
-  userId: string,
-  sessionId: string,
-): BusEvent[] {
+export function getSessionHistory(userId: string, sessionId: string): BusEvent[] {
   return buf.get(`${userId}:${sessionId}`) ?? [];
 }
 

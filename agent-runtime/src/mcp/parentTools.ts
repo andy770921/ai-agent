@@ -49,8 +49,7 @@ export const taskGithubTool = createTool({
       taskName: 'github',
       mcpClient: githubMcp,
       prompt: context.task,
-      systemHint:
-        'You are a GitHub specialist. Use GitHub MCP tools to fulfil the task.',
+      systemHint: 'You are a GitHub specialist. Use GitHub MCP tools to fulfil the task.',
     });
   },
 });
@@ -64,10 +63,8 @@ export const sendImageTool = createTool({
     const userId = String(runtimeContext?.get('userId') ?? '');
     const { execFile } = await import('node:child_process');
     const out = await new Promise<string>((resolve, reject) =>
-      execFile(
-        '/usr/local/bin/deliver-line-image.sh',
-        [userId, context.pngPath],
-        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      execFile('/usr/local/bin/deliver-line-image.sh', [userId, context.pngPath], (err, stdout) =>
+        err ? reject(err) : resolve(stdout),
       ),
     );
     try {

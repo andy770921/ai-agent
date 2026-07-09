@@ -10,8 +10,19 @@ interface AgentEventBase {
 type AgentEvent =
   | (AgentEventBase & { type: 'message_in'; text: string })
   | (AgentEventBase & { type: 'tool_call'; tool: string; args: unknown })
-  | (AgentEventBase & { type: 'tool_result'; tool: string; durationMs: number; ok: boolean; error?: string })
-  | (AgentEventBase & { type: 'message_out'; text: string; kind: 'text' | 'image'; imageUrl?: string })
+  | (AgentEventBase & {
+      type: 'tool_result';
+      tool: string;
+      durationMs: number;
+      ok: boolean;
+      error?: string;
+    })
+  | (AgentEventBase & {
+      type: 'message_out';
+      text: string;
+      kind: 'text' | 'image';
+      imageUrl?: string;
+    })
   | (AgentEventBase & { type: 'session_ended' });
 
 /** Map internal BusEvent → existing AgentEvent wire format for dashboard. */
@@ -55,22 +66,16 @@ function toWireEvent(ev: BusEvent): AgentEvent {
 
 export async function sseStreamHandler(c: Context) {
   const auth = c.req.header('authorization') ?? '';
-  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`)
-    return c.json({ ok: false }, 401);
+  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`) return c.json({ ok: false }, 401);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
       const unsubscribe = agentEventBus.on((ev) => {
         const wire = toWireEvent(ev);
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(wire)}\n\n`),
-        );
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(wire)}\n\n`));
       });
-      const ka = setInterval(
-        () => controller.enqueue(encoder.encode(': keepalive\n\n')),
-        15_000,
-      );
+      const ka = setInterval(() => controller.enqueue(encoder.encode(': keepalive\n\n')), 15_000);
       c.req.raw.signal?.addEventListener('abort', () => {
         clearInterval(ka);
         unsubscribe();
@@ -90,15 +95,13 @@ export async function sseStreamHandler(c: Context) {
 
 export async function sessionsHandler(c: Context) {
   const auth = c.req.header('authorization') ?? '';
-  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`)
-    return c.json({ ok: false }, 401);
+  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`) return c.json({ ok: false }, 401);
   return c.json(listSessions());
 }
 
 export async function sessionHistoryHandler(c: Context) {
   const auth = c.req.header('authorization') ?? '';
-  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`)
-    return c.json({ ok: false }, 401);
+  if (auth !== `Bearer ${process.env.DASHBOARD_INGEST_TOKEN}`) return c.json({ ok: false }, 401);
   const id = c.req.param('id') ?? '';
   const [userId, ...rest] = id.split(':');
   const events = getSessionHistory(userId, rest.join(':'));

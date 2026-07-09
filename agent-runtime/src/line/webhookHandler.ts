@@ -2,8 +2,8 @@ import type { Context } from 'hono';
 import { verifyLineSignature } from './signatureVerifier.js';
 import { runTurn } from '../agent/runTurn.js';
 import { replyOrPush } from './replyOrPush.js';
-import { appendUserMessage, appendAssistantMessage } from '../db/messages.js';
-import { upsertUser } from '../db/users.js';
+import { appendUserMessage, appendAssistantMessage } from '../store/messageStore.js';
+import { upsertUser } from '../store/userStore.js';
 import { rememberReplyToken } from './replyTokenStore.js';
 import { sessionIdFor } from '../agent/session.js';
 import { agentEventBus } from '../observability/bus.js';
@@ -21,13 +21,10 @@ export async function lineWebhookHandler(c: Context) {
 
   const raw = await c.req.text();
   const sig = c.req.header('x-line-signature') ?? '';
-  if (!verifyLineSignature(raw, sig, secret))
-    return c.json({ ok: false }, 401);
+  if (!verifyLineSignature(raw, sig, secret)) return c.json({ ok: false }, 401);
 
   const payload = JSON.parse(raw) as { events: LineEvent[] };
-  processEvents(payload.events).catch((e) =>
-    console.error('webhook processEvents', e),
-  );
+  processEvents(payload.events).catch((e) => console.error('webhook processEvents', e));
   return c.json({ ok: true });
 }
 
@@ -41,11 +38,7 @@ async function processEvents(events: LineEvent[]) {
     if (ev.type !== 'message' || ev.message.type !== 'text') continue;
     const userId = ev.source.userId;
 
-    if (
-      ALLOWED_USER_IDS.length > 0 &&
-      !ALLOWED_USER_IDS.includes(userId)
-    )
-      continue;
+    if (ALLOWED_USER_IDS.length > 0 && !ALLOWED_USER_IDS.includes(userId)) continue;
 
     const sessionId = sessionIdFor(userId);
     rememberReplyToken(userId, ev.replyToken);

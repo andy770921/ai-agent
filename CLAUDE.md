@@ -74,7 +74,9 @@ npm run build:pages --workspace=frontend
    uploads to the KV image store via the Worker then POSTs the resulting URL
    to LINE Push API directly.
 
-No WebSockets. No OpenAB. Single Node.js process listening on `:7860`.
+No WebSockets. No OpenAB. No external database — since FEAT-5 all persistence
+(chat history, memories, skills, config) is in-process and resets on restart.
+Single Node.js process listening on `:7860`.
 
 ### Dashboard event flow
 
@@ -114,8 +116,8 @@ Each workspace has its own `.env.example`:
   `LINE_ALLOWED_USER_IDS`, `CF_UPLOAD_SECRET`, `DASHBOARD_INGEST_TOKEN`,
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
 - `agent-runtime/.env.example` — all container env vars with placeholders
-  (LINE creds, LLM provider keys, Supabase, Langfuse, CF integration).
-  Production values set via HF Space Settings → Repository secrets.
+  (LINE creds, LLM provider keys, Langfuse, CF integration). No Supabase since
+  FEAT-5. Production values set via HF Space Settings → Repository secrets.
 
 The complete env-var table is in `agent-runtime/.env.example`.
 
@@ -136,6 +138,7 @@ documents/FEAT-1/      # original LINE agent build (OpenAB + Gemini CLI — hist
 documents/FEAT-2/      # HF Spaces migration
 documents/FEAT-3/      # MCP env / Langfuse follow-ups
 documents/FEAT-4/      # Mastra rewrite — removed OpenAB, single TS process
+documents/FEAT-5/      # removed Supabase — in-process stores + hardcoded config
 documents/FIX-1/       # one-off fixes
 documents/FIX-2/       # Gemini tool routing fix (superseded by FEAT-4)
 documents/REFACTOR-1/  # deep-modules refactor (Worker + sidecar + frontend SSE)
@@ -164,10 +167,13 @@ glance:
 - `src/agent/` — Mastra agent core (`runTurn`, `composeSystem`, provider routing).
 - `src/line/` — LINE webhook handler, HMAC verifier, reply/push, replyToken store.
 - `src/mcp/` — MCP subagent dispatch (`parentTools`, `subagentRunner`, `mcpClients`).
-- `src/db/` — Supabase persistence (messages, memories, skills, agentConfig, writeQueue).
+- `src/config/` — hardcoded agent config (`agentConfig`: system prompt, default
+  model, feature flags). Replaced the Supabase `agent_config` table in FEAT-5.
+- `src/store/` — in-process replacements for the old Supabase tables
+  (`messageStore`, `memoryStore`, `skillStore`, `userStore`, `curatorRunStore`,
+  `locks`). All state is per-container and resets on restart. Added in FEAT-5.
 - `src/memory/` — Session-end memory extraction pipeline (5-gate trigger).
 - `src/skills/` — Skill auto-creation pipeline.
-- `src/curator/` — Weekly curator cron (stale/archive/consolidate).
 - `src/observability/` — Event bus, ring buffer sink, SSE fan-out.
 - `src/ports/` — healthz, image store upload.
 

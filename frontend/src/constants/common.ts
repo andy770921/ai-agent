@@ -1,3 +1,3 @@
 export const HTTP_STATUS_CODE = {
   REQUEST_TIMEOUT: 408,
-}
+};

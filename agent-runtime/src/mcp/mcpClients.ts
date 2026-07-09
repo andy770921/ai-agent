@@ -12,7 +12,12 @@ export const playwrightMcp = new MastraMCPClient({
   server: {
     command: isDocker ? 'node' : 'npx',
     args: isDocker
-      ? ['/usr/local/lib/node_modules/@playwright/mcp/cli.js', '--browser', 'chromium', '--headless']
+      ? [
+          '/usr/local/lib/node_modules/@playwright/mcp/cli.js',
+          '--browser',
+          'chromium',
+          '--headless',
+        ]
       : ['@playwright/mcp', '--browser', 'chromium', '--headless'],
     env: {
       ...process.env,
@@ -22,9 +27,7 @@ export const playwrightMcp = new MastraMCPClient({
 
 const githubBin =
   process.env.GITHUB_MCP_BIN ??
-  (process.platform === 'linux'
-    ? '/usr/local/bin/github-mcp-server'
-    : 'github-mcp-server');
+  (process.platform === 'linux' ? '/usr/local/bin/github-mcp-server' : 'github-mcp-server');
 
 export const githubMcp = new MastraMCPClient({
   name: 'github',

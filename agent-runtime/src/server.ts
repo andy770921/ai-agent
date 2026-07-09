@@ -1,15 +1,9 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { lineWebhookHandler } from './line/webhookHandler.js';
-import {
-  sseStreamHandler,
-  sessionsHandler,
-  sessionHistoryHandler,
-} from './observability/sse.js';
+import { sseStreamHandler, sessionsHandler, sessionHistoryHandler } from './observability/sse.js';
 import { imageUploadHandler } from './ports/imageStore.js';
 import { healthzHandler } from './ports/healthz.js';
-import { curatorHandler } from './curator/handler.js';
-import { flushQueue } from './db/writeQueue.js';
 import { agentEventBus } from './observability/bus.js';
 import { extractMemory } from './memory/extractMemory.js';
 import { maybeCreateSkill } from './skills/createSkill.js';
@@ -28,7 +22,6 @@ app.get('/sessions/:id/history', sessionHistoryHandler);
 app.post('/img', imageUploadHandler);
 app.get('/healthz', healthzHandler);
 app.get('/', (c) => c.text('agent-runtime ok'));
-app.post('/admin/curator', curatorHandler);
 
 // Session-end pipelines
 agentEventBus.on(async (ev) => {
@@ -59,6 +52,6 @@ getLangfuse();
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, flushing…');
-  await Promise.all([flushQueue(), flushLangfuse()]);
+  await flushLangfuse();
   process.exit(0);
 });

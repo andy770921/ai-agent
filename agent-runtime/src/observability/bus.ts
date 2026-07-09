@@ -1,11 +1,6 @@
 /** Internal bus event — richer than the SSE wire format. */
 export interface BusEvent {
-  type:
-    | 'message_in'
-    | 'tool_call'
-    | 'tool_result'
-    | 'message_out'
-    | 'session_ended';
+  type: 'message_in' | 'tool_call' | 'tool_result' | 'message_out' | 'session_ended';
   userId: string;
   sessionId: string;
   ts?: number;

@@ -5,14 +5,9 @@ export function verifyLineSignature(
   signature: string,
   channelSecret: string,
 ): boolean {
-  const expected = createHmac('sha256', channelSecret)
-    .update(rawBody)
-    .digest('base64');
+  const expected = createHmac('sha256', channelSecret).update(rawBody).digest('base64');
   try {
-    return timingSafeEqual(
-      Buffer.from(expected),
-      Buffer.from(signature),
-    );
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
   } catch {
     return false;
   }

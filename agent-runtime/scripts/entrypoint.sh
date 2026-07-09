@@ -4,10 +4,9 @@
 set -eu
 
 # ===== Validate required env (fail-fast on misconfig) =====================
+# Supabase removed in FEAT-5 — persistence is now in-process (src/store/).
 : "${LINE_CHANNEL_SECRET:?missing}"
 : "${LINE_CHANNEL_ACCESS_TOKEN:?missing}"
-: "${SUPABASE_URL:?missing}"
-: "${SUPABASE_SERVICE_KEY:?missing}"
 : "${DASHBOARD_INGEST_TOKEN:?missing}"
 : "${CF_UPLOAD_SECRET:?missing}"
 : "${CF_IMG_BASE_URL:?missing}"

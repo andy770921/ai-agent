@@ -30,7 +30,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }}
       >
         <nav>
-          <Link href="/dashboard" style={{ marginRight: 12 }}>Live feed</Link>
+          <Link href="/dashboard" style={{ marginRight: 12 }}>
+            Live feed
+          </Link>
           <Link href="/dashboard/sessions">Sessions</Link>
         </nav>
         {token && (

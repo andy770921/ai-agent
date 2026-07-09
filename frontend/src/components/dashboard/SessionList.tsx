@@ -17,7 +17,8 @@ export function SessionList({ sessions }: Props) {
             <strong>{s.userId.slice(0, 12)}…</strong>
           </Link>
           <div style={{ fontSize: 12, color: '#555' }}>
-            {s.msgCount} events · last seen {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}
+            {s.msgCount} events · last seen{' '}
+            {s.lastSeen ? new Date(s.lastSeen).toLocaleString() : '—'}
           </div>
         </li>
       ))}

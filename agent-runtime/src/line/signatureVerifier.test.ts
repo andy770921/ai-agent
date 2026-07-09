@@ -5,9 +5,7 @@ import { verifyLineSignature } from './signatureVerifier.js';
 describe('verifyLineSignature', () => {
   const secret = 'test-secret-key';
   const body = '{"events":[]}';
-  const validSig = createHmac('sha256', secret)
-    .update(body)
-    .digest('base64');
+  const validSig = createHmac('sha256', secret).update(body).digest('base64');
 
   it('accepts a valid signature', () => {
     expect(verifyLineSignature(body, validSig, secret)).toBe(true);

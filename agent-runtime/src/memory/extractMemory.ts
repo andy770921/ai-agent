@@ -1,9 +1,15 @@
 import { Agent, PROVIDERS } from '../agent/index.js';
 import { pickProvider } from '../agent/providerRouting.js';
-import { db } from '../db/client.js';
-import { loadRecentMessages } from '../db/messages.js';
+import { loadRecentMessages } from '../store/messageStore.js';
+import {
+  existingMemoryIndex,
+  listMemories,
+  insertMemory,
+  patchMemory,
+} from '../store/memoryStore.js';
+import { recordCuratorRun } from '../store/curatorRunStore.js';
 import { gateMemoryExtraction } from './gateCheck.js';
-import { withAdvisoryLock } from '../db/locks.js';
+import { withAdvisoryLock } from '../store/locks.js';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
@@ -44,19 +50,11 @@ export async function extractMemory(userId: string, sessionId: string) {
   if (!gate.allow) return { skipped: true, reason: gate.reason };
 
   return withAdvisoryLock(`memory:${userId}`, async () => {
-    await db().from('curator_runs').insert({
-      user_id: userId,
-      phase: 'extract-attempt',
-    });
+    recordCuratorRun({ userId, phase: 'extract-attempt' });
 
     const [transcript, existing, providerKey] = await Promise.all([
       loadRecentMessages({ userId, sessionId, limit: 20 }),
-      db()
-        .from('memories')
-        .select('slug, title')
-        .eq('user_id', userId)
-        .eq('state', 'active')
-        .limit(50),
+      Promise.resolve(existingMemoryIndex(userId)),
       pickProvider(userId, 'extractor'),
     ]);
 
@@ -65,21 +63,8 @@ export async function extractMemory(userId: string, sessionId: string) {
       description: 'List existing active memories for this user.',
       inputSchema: z.object({}),
       execute: async () => {
-        const r = await db()
-          .from('memories')
-          .select('slug, title, category')
-          .eq('user_id', userId)
-          .eq('state', 'active')
-          .order('last_used_at', {
-            ascending: false,
-            nullsFirst: false,
-          })
-          .limit(50);
-        return (r.data ?? [])
-          .map(
-            (m: Record<string, string>) =>
-              `${m.slug} [${m.category}]: ${m.title}`,
-          )
+        return listMemories(userId)
+          .map((m) => `${m.slug} [${m.category}]: ${m.title}`)
           .join('\n');
       },
     });
@@ -94,42 +79,33 @@ export async function extractMemory(userId: string, sessionId: string) {
         body: z.string(),
       }),
       execute: async ({ context }) => {
-        const { error } = await db().from('memories').insert({
-          user_id: userId,
+        return insertMemory({
+          userId,
           slug: context.slug,
           category: context.category,
           title: context.title,
           body: context.body,
         });
-        if (error) return { ok: false, error: error.message };
-        return { ok: true };
       },
     });
 
     const patchTool = createTool({
       id: 'memory_patch',
-      description:
-        'Update an existing memory by slug. Only updates fields you provide.',
+      description: 'Update an existing memory by slug. Only updates fields you provide.',
       inputSchema: z.object({
         slug: z.string(),
         title: z.string().optional(),
         body: z.string().optional(),
-        category: z
-          .enum(['user', 'feedback', 'project', 'reference'])
-          .optional(),
+        category: z.enum(['user', 'feedback', 'project', 'reference']).optional(),
       }),
       execute: async ({ context }) => {
-        const updates: Record<string, unknown> = {};
-        if (context.title) updates.title = context.title;
-        if (context.body) updates.body = context.body;
-        if (context.category) updates.category = context.category;
-        const { error } = await db()
-          .from('memories')
-          .update(updates)
-          .eq('user_id', userId)
-          .eq('slug', context.slug);
-        if (error) return { ok: false, error: error.message };
-        return { ok: true };
+        return patchMemory({
+          userId,
+          slug: context.slug,
+          title: context.title,
+          body: context.body,
+          category: context.category,
+        });
       },
     });
 
@@ -137,19 +113,10 @@ export async function extractMemory(userId: string, sessionId: string) {
       name: 'memory-extractor',
       instructions: EXTRACT_PROMPT.replace(
         '{{existing_index}}',
-        (existing.data ?? [])
-          .map(
-            (m: Record<string, string>) => `- ${m.slug}: ${m.title}`,
-          )
-          .join('\n'),
+        existing.map((m) => `- ${m.slug}: ${m.title}`).join('\n'),
       ).replace(
         '{{transcript}}',
-        transcript
-          .map(
-            (m: Record<string, unknown>) =>
-              `${m.role}: ${JSON.stringify(m.content)}`,
-          )
-          .join('\n'),
+        transcript.map((m) => `${m.role}: ${JSON.stringify(m.content)}`).join('\n'),
       ),
       model: PROVIDERS[providerKey],
       tools: {
@@ -159,15 +126,9 @@ export async function extractMemory(userId: string, sessionId: string) {
       },
     });
 
-    await subagent.generate(
-      [{ role: 'user', content: 'Extract memories now.' }],
-      { maxSteps: 5 },
-    );
+    await subagent.generate([{ role: 'user', content: 'Extract memories now.' }], { maxSteps: 5 });
 
-    await db().from('curator_runs').insert({
-      user_id: userId,
-      phase: 'extract-success',
-    });
+    recordCuratorRun({ userId, phase: 'extract-success' });
     return { skipped: false };
   });
 }

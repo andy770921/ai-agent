@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { composeSystem } from './composeSystem.js';
-import type { Memory } from '../db/memories.js';
+import type { Memory } from '../store/memoryStore.js';
 
 describe('composeSystem', () => {
   it('returns just the global prompt when no memories or skills', () => {

@@ -57,10 +57,9 @@ export async function runSubagent(a: Args): Promise<string> {
         attempt,
         parentTraceId: a.parentTraceId,
       });
-      const result = await subagent.generate(
-        [{ role: 'user', content: a.prompt }],
-        { maxSteps: 12 },
-      );
+      const result = await subagent.generate([{ role: 'user', content: a.prompt }], {
+        maxSteps: 12,
+      });
       logSubagentSteps(a.taskName, result);
       agentEventBus.emit({
         type: 'tool_result',
@@ -87,7 +86,8 @@ export async function runSubagent(a: Args): Promise<string> {
         return JSON.stringify({
           ok: false,
           task: a.taskName,
-          userMessage: 'LLM calling limit exceeded for today. Please try again tomorrow or ask the admin to switch to a paid model.',
+          userMessage:
+            'LLM calling limit exceeded for today. Please try again tomorrow or ask the admin to switch to a paid model.',
         });
       }
 
