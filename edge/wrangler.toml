@@ -33,6 +33,11 @@ SIDECAR_BASE_URL = "https://andy770921-ai-agent.hf.space"
 # Origin that hosts the dashboard frontend (Cloudflare Pages).
 DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 
+# Curator was removed in FEAT-5. Keep an explicit empty list: omitting
+# triggers/crons preserves existing Cloudflare schedules on deployment.
+[triggers]
+crons = []
+
 # === Secrets (set via `wrangler secret put <NAME>`) ===
 # LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge
 # LINE_ALLOWED_USER_IDS  — comma-separated allowlist (edge fast-fail)
