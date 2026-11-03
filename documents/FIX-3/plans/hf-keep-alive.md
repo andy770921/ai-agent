@@ -7,13 +7,14 @@ found asleep, so LINE messages went unanswered until someone opened the Space.
 The free `cpu-basic` tier sleeps a Space after 48 h without traffic
 (`runtime.gcTimeout: 172800` from `GET https://huggingface.co/api/spaces/andy770921/ai-agent`).
 
-FEAT-2 added a keep-alive for exactly this: the `keep-alive` job in
-`.github/workflows/hf-sync.yml` pinged the Space every 12 hours.
+FEAT-2 added a keep-alive for exactly this: a `schedule` trigger plus a
+`keep-alive` job in `.github/workflows/hf-sync.yml` that pinged the Space every
+12 hours.
 
 ## Root cause
 
-1. **GitHub disabled the schedule.** The GitHub API reports the workflow's
-   state as `disabled_inactivity`. GitHub documents: *"In a public repository,
+1. **GitHub disabled the workflow.** The GitHub API reports its state as
+   `disabled_inactivity`. GitHub documents: *"In a public repository,
    scheduled workflows are automatically disabled when no repository activity
    has occurred in 60 days."* The timeline matches exactly:
 
@@ -24,18 +25,21 @@ FEAT-2 added a keep-alive for exactly this: the `keep-alive` job in
    | 2026-10-05 | `ee14cc1` pushed, but a push does **not** re-enable a disabled workflow |
    | → 2026-11-03 | No pings → Space idle > 48 h → asleep |
 
+   Disabling stops the workflow from being triggered at all, so the
+   push-triggered HF sync in the same file is also stopped until someone
+   re-enables it.
+
 2. **The job could never fail.** It ran `curl … https://…hf.space/ || true` and
    only echoed the status code. A sleeping or broken Space still produced a
-   green run, so even while the schedule was active, nothing would have warned
-   us.
+   green run.
 
 ## Decisions
 
 | Question | Decision | Rationale |
 |---|---|---|
-| Primary keep-alive | **Cloudflare Worker Cron Trigger** (`edge/`), every 6 h, `GET /healthz`. | The Worker already exists and knows the Space URL. Cloudflare documents no inactivity-based disabling of Cron Triggers (unlike GitHub's 60-day rule). Usage is far inside Free-plan limits (see below). 6 h gives 8 attempts per 48 h window, so a few missed or failed runs can't let the Space sleep. |
-| Keep the GitHub job? | **Yes, as an independent backup** (12 h). | The two schedulers fail for unrelated reasons: GitHub on a predictable 60-day inactivity rule, Cloudflare on rare platform incidents. Either one alone covers the 48 h window. |
-| How does a failure become visible? | **Both pingers fail loudly.** The Worker's `scheduled` handler throws, so the invocation is marked failed in Cron Events / Workers Logs. The GitHub job uses `curl --fail` on `/healthz` plus a body check, so the run goes red, and GitHub notifies *"the user who last modified the cron syntax in the workflow file"*. | Fixes root cause 2. |
+| Keep-alive mechanism | **One: a Cloudflare Worker Cron Trigger** (`edge/`), every 6 h, `GET /healthz`. | The Worker already exists and knows the Space URL. Cloudflare documents no inactivity-based disabling of Cron Triggers (see below). 6 h gives 8 attempts per 48 h window, so a few failed runs, or an outage of several hours, can't let the Space sleep. |
+| GitHub Actions keep-alive | **Removed**: both the `schedule` trigger and the `keep-alive` job. The push-triggered `sync` job is kept unchanged. | The GitHub schedule is what timed out. Keeping a `schedule` trigger in `hf-sync.yml` is also what makes the *sync* workflow subject to the 60-day auto-disable. One mechanism that can't time out is enough. A second pinger would be more to maintain without fixing that. |
+| Failure visibility | `scheduled` **awaits** the ping, and `pingAgentRuntime` **throws** when the Space is unhealthy. | The invocation is then recorded as failed in Cron Events / Workers Logs instead of passing silently. Fixes root cause 2. |
 | What counts as healthy? | **HTTP 2xx and a JSON body with `ok: true`** (what `agent-runtime/src/ports/healthz.ts` returns). | `/` returned plain text and proved little. A 200 HTML interstitial (e.g. while the Space builds) must not count as healthy. |
 
 ### Can Cloudflare stop our cron the same way GitHub did?
@@ -57,26 +61,38 @@ Checked on 2026-11-03 against Cloudflare's docs:
   Community threads also report schedules that silently stopped dispatching.
   Third-party trackers list more recent "Cron Trigger activation issues"
   incidents, reportedly affecting newly created or modified schedules. That
-  detail is unverified because the pages were not readable. This is why the
-  GitHub backup stays and why the post-deploy checklist verifies the first
-  runs.
+  detail is unverified because the pages were not readable.
+  - **Mitigated by:** the 6 h cadence, which absorbs incidents of several
+    hours, and the post-deploy checklist, which confirms the first runs
+    actually fire.
+  - **Not mitigated:** a multi-day silent stop raises no alert. The symptom
+    would be the bot going quiet about 48 h later; check Cron Events first.
 
 ## Alternatives considered
 
+- **Keep the GitHub job as a backup pinger.** Rejected: it is the mechanism
+  that already timed out, and its `schedule` trigger re-exposes the sync
+  workflow to auto-disable.
 - **HF paid hardware with sleep disabled.** Removes the problem entirely, but
   costs money. Not worth it for a single-user bot today.
-- **Third-party uptime monitor** (UptimeRobot etc.). Works, but adds another
-  account outside the repo. The Worker is already ours.
+- **Third-party uptime monitor** (UptimeRobot etc.). Works and would add
+  alerting, but adds another account outside the repo. Revisit if the
+  not-mitigated case above ever happens.
 - **Dummy commits / auto re-enabling the GitHub workflow** to dodge the 60-day
-  rule. Rejected: it games a platform policy, and the Worker cron makes it
-  unnecessary.
+  rule. Rejected: it games a platform policy.
 
 ## Scope
 
-**In scope:** `edge/src/keepAlive.ts` (new), the `scheduled` export in
-`edge/src/index.ts`, `[triggers]` in `edge/wrangler.toml`, the `keep-alive`
-job in `hf-sync.yml`, tests, README / CLAUDE.md.
+**In scope:**
+- `edge/src/keepAlive.ts` (new);
+- the `scheduled` export in `edge/src/index.ts`;
+- `[triggers]` in `edge/wrangler.toml`;
+- removing the schedule and `keep-alive` job from `hf-sync.yml`;
+- tests;
+- README / CLAUDE.md.
 
-**Out of scope:** waking an already-sleeping Space via the HF API (needs an
-HF token in the Worker), alerting beyond what Cloudflare and GitHub provide by
-default, and any `agent-runtime/` change (`/healthz` already exists).
+**Out of scope:**
+- waking an already-sleeping Space via the HF API (needs an HF token in the
+  Worker);
+- alerting beyond Cloudflare's built-in Cron Events / Workers Logs;
+- any `agent-runtime/` change (`/healthz` already exists).

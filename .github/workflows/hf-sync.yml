@@ -1,18 +1,18 @@
 name: Sync to Hugging Face Space
 
+# No `schedule` trigger on purpose: the Space's keep-alive is the Cloudflare
+# Worker cron (edge/wrangler.toml, FIX-3). GitHub auto-disables scheduled
+# workflows after 60 days without repo activity, which also stopped this sync.
 on:
   push:
     branches: [main]
     paths:
       - 'agent-runtime/**'
-  schedule:
-    - cron: '0 */12 * * *'
   workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,20 +46,3 @@ jobs:
             git commit -m "sync from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
             git push
           fi
-
-  keep-alive:
-    runs-on: ubuntu-latest
-    # Only run on schedule, not on push. Backup for the primary keep-alive, the
-    # Cloudflare Worker cron (edge/wrangler.toml, FIX-3): GitHub auto-disables
-    # this schedule after 60 days without repo activity.
-    if: github.event_name == 'schedule'
-    steps:
-      - name: Check HF Space /healthz
-        run: |
-          # --fail makes HTTP >= 400 a non-zero exit, so a sleeping or broken
-          # Space turns the run red instead of always reporting success.
-          BODY=$(curl --fail --silent --show-error --max-time 30 \
-            --retry 3 --retry-delay 20 --retry-all-errors \
-            https://andy770921-ai-agent.hf.space/healthz)
-          echo "HF Space /healthz: $BODY"
-          echo "$BODY" | grep -q '"ok":true'

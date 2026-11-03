@@ -137,15 +137,11 @@ GitHub Actions (`.github/workflows/hf-sync.yml`) handles:
 
 - **Auto-sync**: on push to `main` touching `agent-runtime/**`, copies the
   directory contents to the HF Space git repo → triggers a Docker rebuild.
-- **Keep-alive (backup)**: cron every 12 hours checks the Space's `/healthz`
-  with `curl --fail`, so a sleeping or broken Space turns the run red. GitHub
-  auto-disables this schedule after 60 days without repo activity — re-enable
-  it from the Actions tab when that happens.
-
-The **primary** keep-alive is the Cloudflare Worker's Cron Trigger
-(`edge/wrangler.toml`, every 6 hours → `GET /healthz`), which has no
-inactivity rule. Both exist to stay inside HF's 48-hour idle-sleep window;
-see `documents/FIX-3/`.
+The Space's **keep-alive** is not in GitHub Actions: GitHub auto-disables
+scheduled workflows after 60 days without repo activity. It is the Cloudflare
+Worker's Cron Trigger (`edge/wrangler.toml`, every 6 hours → `GET /healthz`),
+which keeps the Space inside HF's 48-hour idle-sleep window. See
+`documents/FIX-3/`.
 
 Requires `HF_TOKEN` as a GitHub Actions secret (generate at
 huggingface.co/settings/tokens with `write` permission).

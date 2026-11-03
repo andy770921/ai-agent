@@ -1,4 +1,4 @@
-# FIX-3 — Implementation: Worker cron keep-alive + loud GitHub backup
+# FIX-3 — Implementation: Worker cron keep-alive
 
 See `../plans/hf-keep-alive.md` for the root cause and decisions.
 
@@ -10,7 +10,7 @@ See `../plans/hf-keep-alive.md` for the root cause and decisions.
 | `edge/src/index.ts` | Default export gains `async scheduled(_controller, env, _ctx)`, which awaits `pingAgentRuntime(env.GATEWAY_BASE_URL)`. |
 | `edge/wrangler.toml` | `[triggers] crons = []` → `["0 */6 * * *"]`. |
 | `edge/test/keepAlive.test.ts` | **New.** 6 tests (below). |
-| `.github/workflows/hf-sync.yml` | `keep-alive` job: `curl … / \|\| true` → `curl --fail … /healthz` with retries plus a body check. |
+| `.github/workflows/hf-sync.yml` | Removed the `schedule` trigger, the `keep-alive` job, and the `sync` job's `if: github.event_name != 'schedule'`. The push (`main` + `agent-runtime/**`) and `workflow_dispatch` triggers and the `sync` job's steps are unchanged. A header comment explains why there is no schedule. |
 | `README.md`, `CLAUDE.md` | CI/CD section, module list, docs index. |
 
 ## Why `scheduled` awaits instead of `ctx.waitUntil`
@@ -27,19 +27,12 @@ when you deploy. Listing `crons` replaces them. This list is the full set of
 schedules for the Worker, which also keeps the retired FEAT-4 curator cron
 cleared (see `ee14cc1`).
 
-## GitHub backup step
+## Why `hf-sync.yml` must not get a `schedule` back
 
-```bash
-BODY=$(curl --fail --silent --show-error --max-time 30 \
-  --retry 3 --retry-delay 20 --retry-all-errors \
-  https://andy770921-ai-agent.hf.space/healthz)
-echo "HF Space /healthz: $BODY"
-echo "$BODY" | grep -q '"ok":true'
-```
-
-GitHub runs `run:` blocks with `bash -eo pipefail`. A failing `curl` inside
-the assignment, or a failing `grep`, therefore fails the step. The retries
-(about 60 s total) absorb a Space that is still waking up.
+GitHub's 60-day inactivity rule applies to *scheduled* workflows, and
+disabling stops the workflow from being triggered at all. While `hf-sync.yml`
+had a `schedule`, a quiet repo could therefore switch off the HF sync on push
+too. Without one, the sync workflow is no longer subject to that rule.
 
 ## Verification (2026-11-03)
 
@@ -58,10 +51,9 @@ the assignment, or a failing `grep`, therefore fails the step. The retries
   `wrangler dev --test-scheduled` then
   `curl 'http://127.0.0.1:8799/__scheduled?cron=0+*/6+*+*+*'` logged
   `keep-alive: https://andy770921-ai-agent.hf.space/healthz ok (uptime 331.2s)`.
-- **GitHub step, run locally** with `bash --noprofile --norc -eo pipefail`:
-  - against the live Space: prints the body, exit 0;
-  - against a 404 path: 1 attempt + 3 retries, then exit 56, so the run
-    would fail.
+- **Workflow:** `hf-sync.yml` parsed with `js-yaml`. Triggers are `push`
+  (`main`, `agent-runtime/**`) and `workflow_dispatch`, and the only job is
+  `sync`.
 
 ## Deployment checklist
 
@@ -74,25 +66,24 @@ the assignment, or a failing `grep`, therefore fails the step. The retries
    **Cron Events**: the first run should be `Success`. New events can take up
    to 30 min to appear. **Do not skip this step.** A fresh or modified
    schedule is where silent non-dispatch has been reported.
-4. GitHub → Actions → "Sync to Hugging Face Space" → **Enable workflow**. A
-   push does not re-enable a workflow that GitHub disabled for inactivity.
-5. Push to `main`. Only `agent-runtime/**` changes trigger the HF sync job, so
-   this commit doesn't rebuild the Space.
+4. GitHub → Actions → "Sync to Hugging Face Space" → **Enable workflow**. It is
+   still `disabled_inactivity` from before this fix, so pushes to
+   `agent-runtime/**` (e.g. FEAT-6) won't sync to HF until it's re-enabled. A
+   push does not re-enable it. Once re-enabled, it won't be auto-disabled
+   again because it no longer has a schedule.
+5. Push to `main`.
 
-**Rollback:** set `crons = []` and redeploy the Worker. The GitHub job keeps
-working on its own once re-enabled.
+**Rollback:** set `crons = []` and redeploy the Worker. Restoring the old
+GitHub schedule would bring back the 60-day problem, so don't treat it as a
+rollback path.
 
 ## Operating notes / follow-ups
 
-- **Symptoms of a failure:**
-  - a red scheduled run in GitHub Actions (emailed to whoever last edited the
-    cron line);
-  - failed entries in the Worker's Cron Events.
-- **If both pingers stop:** this means the Cloudflare cron stopped *and* the
-  GitHub schedule is disabled. GitHub's disablement is predictable: 60 days
-  without a push. Re-enable it in the Actions tab.
-- **Possible follow-up, cross-check heartbeat:** the Worker could record its
-  last successful ping (e.g. in KV) and expose it. The GitHub job would then
-  fail if that timestamp is older than ~13 h. A silently stopped Cloudflare
-  cron would turn red on GitHub instead of only showing as missing Cron Events.
-  Not built yet. It adds a KV write per run and a new public route.
+- **Symptom of a failure:** failed or missing entries in the Worker's Cron
+  Events. The bot going quiet is the late symptom, about 48 h after pings
+  stop.
+- **Quick manual check:**
+  `curl -sS https://andy770921-ai-agent.hf.space/healthz` should return
+  `{"ok":true,…}`. A small `uptime` value means the Space restarted recently.
+- **Possible follow-up:** if a silent multi-day Cloudflare stop ever happens,
+  add an external uptime monitor on `/healthz` for email alerts.
