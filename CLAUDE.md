@@ -144,6 +144,7 @@ documents/FEAT-5/      # removed Supabase — in-process stores + hardcoded conf
 documents/FEAT-6/      # LLM access via OpenRouter (replaces GEMINI_API_KEY)
 documents/FIX-1/       # one-off fixes
 documents/FIX-2/       # Gemini tool routing fix (superseded by FEAT-4)
+documents/FIX-3/       # HF Space keep-alive → Cloudflare Worker cron
 documents/REFACTOR-1/  # deep-modules refactor (Worker + sidecar + frontend SSE)
 
 Each folder has:
@@ -165,6 +166,9 @@ glance:
   `webhookHandler` factory that composes them.
 - `edge/src/ports/` — outbound adapters (`sidecarClient`, `imageStore`).
 - `edge/src/router.ts` — tiny path/method/CORS router used by `index.ts`.
+- `edge/src/keepAlive.ts` — `pingAgentRuntime`, called by the Worker's
+  `scheduled` handler (Cron Trigger in `wrangler.toml`) to keep the HF Space
+  awake. Throws on an unhealthy `/healthz` so failed runs are visible.
 
 **Agent runtime (`agent-runtime/src/`):**
 - `src/agent/` — Mastra agent core (`runTurn`, `composeSystem`, provider routing).

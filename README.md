@@ -137,8 +137,15 @@ GitHub Actions (`.github/workflows/hf-sync.yml`) handles:
 
 - **Auto-sync**: on push to `main` touching `agent-runtime/**`, copies the
   directory contents to the HF Space git repo → triggers a Docker rebuild.
-- **Keep-alive**: cron every 12 hours pings the Space URL to prevent the
-  48-hour idle sleep.
+- **Keep-alive (backup)**: cron every 12 hours checks the Space's `/healthz`
+  with `curl --fail`, so a sleeping or broken Space turns the run red. GitHub
+  auto-disables this schedule after 60 days without repo activity — re-enable
+  it from the Actions tab when that happens.
+
+The **primary** keep-alive is the Cloudflare Worker's Cron Trigger
+(`edge/wrangler.toml`, every 6 hours → `GET /healthz`), which has no
+inactivity rule. Both exist to stay inside HF's 48-hour idle-sleep window;
+see `documents/FIX-3/`.
 
 Requires `HF_TOKEN` as a GitHub Actions secret (generate at
 huggingface.co/settings/tokens with `write` permission).
@@ -172,6 +179,7 @@ Slash commands live under `.claude/commands/`. Use the ticket ID in place of
 - `documents/FEAT-1/` — original LINE agent build (historical — OpenAB + Gemini CLI).
 - `documents/FEAT-2/` — HF Spaces migration.
 - `documents/FIX-2/` — Gemini tool routing fix (superseded by FEAT-4).
+- `documents/FIX-3/` — HF Space keep-alive moved to a Cloudflare Worker cron.
 - `documents/REFACTOR-1/` — deep-modules refactor RFC.
 
 ## License

@@ -49,10 +49,17 @@ jobs:
 
   keep-alive:
     runs-on: ubuntu-latest
-    # Only run on schedule, not on push
+    # Only run on schedule, not on push. Backup for the primary keep-alive, the
+    # Cloudflare Worker cron (edge/wrangler.toml, FIX-3): GitHub auto-disables
+    # this schedule after 60 days without repo activity.
     if: github.event_name == 'schedule'
     steps:
-      - name: Ping HF Space to prevent sleep
+      - name: Check HF Space /healthz
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://andy770921-ai-agent.hf.space/ || true)
-          echo "HF Space responded with HTTP $STATUS"
+          # --fail makes HTTP >= 400 a non-zero exit, so a sleeping or broken
+          # Space turns the run red instead of always reporting success.
+          BODY=$(curl --fail --silent --show-error --max-time 30 \
+            --retry 3 --retry-delay 20 --retry-all-errors \
+            https://andy770921-ai-agent.hf.space/healthz)
+          echo "HF Space /healthz: $BODY"
+          echo "$BODY" | grep -q '"ok":true'

@@ -33,10 +33,12 @@ SIDECAR_BASE_URL = "https://andy770921-ai-agent.hf.space"
 # Origin that hosts the dashboard frontend (Cloudflare Pages).
 DASHBOARD_ORIGIN = "https://ai-agent-dashboard.pages.dev"
 
-# Curator was removed in FEAT-5. Keep an explicit empty list: omitting
-# triggers/crons preserves existing Cloudflare schedules on deployment.
+# Keep-alive (FIX-3): `scheduled` in src/index.ts pings the HF Space's /healthz
+# every 6 hours, well inside the free tier's 48 h idle-sleep window. This list
+# replaces all of the Worker's Cloudflare schedules on deploy (which is also
+# what keeps the retired FEAT-4 curator cron cleared).
 [triggers]
-crons = []
+crons = ["0 */6 * * *"]
 
 # === Secrets (set via `wrangler secret put <NAME>`) ===
 # LINE_CHANNEL_SECRET    — for X-Line-Signature pre-check at the edge

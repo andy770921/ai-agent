@@ -9,6 +9,7 @@ import { corsHeaders } from './cors';
 import { createHttpSidecarClient } from './ports/sidecarClient';
 import { createKvImageStore } from './ports/imageStore';
 import { createRouter, type RouteHandler } from './router';
+import { pingAgentRuntime } from './keepAlive';
 
 export type { Env };
 
@@ -93,4 +94,9 @@ const router = createRouter<Env>(
 
 export default {
   fetch: router.fetch,
+  // Cron Trigger (wrangler.toml `[triggers]`): keep the HF Space awake.
+  // Awaited so a failed ping fails the invocation instead of passing silently.
+  async scheduled(_controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
+    await pingAgentRuntime(env.GATEWAY_BASE_URL);
+  },
 };
