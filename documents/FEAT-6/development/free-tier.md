@@ -30,6 +30,56 @@ runTurn failed MastraError: Payment Required
    Here it assumed the model's full 65535-token output limit, so even "Hi"
    failed.
 
+## Incident 2 (2026-11-03, after switching to the free model)
+
+"Hi" still failed, this time with **429**, after the AI SDK's 3 attempts:
+
+```
+runTurn failed MastraError: Failed after 3 attempts. Last error: Too Many Requests
+  modelId: 'google/gemma-4-31b-it:free'
+  statusCode: 429
+  responseBody: {"error":{"message":"Provider returned error","code":429,"metadata":{
+    "raw":"google/gemma-4-31b-it:free is temporarily rate-limited upstream. …",
+    "provider_name":"Google AI Studio",
+    "limit_source":"upstream_provider_shared_pool", …}}}
+```
+
+This was not our own free-tier quota (20/min, 50/day).
+`limit_source: upstream_provider_shared_pool` means the model's only upstream
+provider ran out of the capacity that all free users share. A single free
+model is a single point of failure.
+
+**Fix: OpenRouter model fallbacks.** The free entry now sends
+`models: FREE_MODEL_CHAIN` (`src/agent/index.ts`). OpenRouter's
+[Model Fallbacks](https://openrouter.ai/docs/guides/routing/model-fallbacks)
+guide says *"any error can trigger the use of a fallback model"*, and lists
+rate-limiting and downtime among them. The chain:
+
+1. `google/gemma-4-31b-it:free` (Google AI Studio)
+2. `nvidia/nemotron-3-ultra-550b-a55b:free` (Nvidia)
+3. `google/gemma-4-26b-a4b-it:free` (Google AI Studio)
+
+- **Selection:** on 2026-11-03 all three were status 0 at 100% uptime with
+  tool support, and the chain spans two providers.
+- **Primary is listed first:** that order is correct whether OpenRouter treats
+  `models` as the full list or as fallbacks after `model`. The docs don't say
+  which.
+- **Every entry must stay `:free`:** *"you're billed at the paid model's
+  price"* if a fallback is paid. `runTurn.test.ts` enforces this.
+- **Logging:** `runTurn` logs `[runTurn] <key> served by <model>` from the
+  response's `model` field, so the HF logs show which fallback answered.
+
+**Rejected: `openrouter/free`** (OpenRouter's "Free Models Router"). It
+*"selects free models at random"*, so each step of a multi-step tool flow
+could land on a different model, including small ones such as
+`liquid/lfm-2.5-2.6b:free`. That's too unpredictable for the screenshot
+chain.
+
+**Alternative if shared pools keep failing:** BYOK. Add your own Google AI
+Studio key under OpenRouter → Workspaces → BYOK, so Google models use your own
+limits (the 429's `remedy_hint`). This is an account setting, not code. Check
+OpenRouter's BYOK fee terms first.
+
 ## Goal and decisions
 
 The goal is to make "Hi" **and** a screenshot request work **without buying
@@ -37,7 +87,7 @@ credits**.
 
 | Change | Why |
 |---|---|
-| `DEFAULT_MODEL = 'gemma-4-31b-it:free'` (`src/config/agentConfig.ts`), with a new `PROVIDERS` entry → `google/gemma-4-31b-it:free` | Free models cost $0, and the up-front cost estimate *"does not apply to requests to free models"*. A cap alone isn't enough: on a paid model every message still spends the ~$0.04, and once it can't cover 8192 tokens the 402 returns. |
+| `DEFAULT_MODEL = 'gemma-4-31b-it:free'` (`src/config/agentConfig.ts`), with a new `PROVIDERS` entry → `google/gemma-4-31b-it:free` plus free fallbacks (see Incident 2) | Free models cost $0, and the up-front cost estimate *"does not apply to requests to free models"*. A cap alone isn't enough: on a paid model every message still spends the ~$0.04, and once it can't cover 8192 tokens the 402 returns. |
 | `MAX_OUTPUT_TOKENS = 8192`, passed as `maxTokens` to all four `generate()` calls (`runTurn`, `subagentRunner`, `extractMemory`, `createSkill`) | Requested cap. Shrinks the cost estimate for paid models and bounds runaway output on any model. Gemma's max output is 32768. |
 | `runTurn` tool keys `send_image` / `task_browser` / `task_github` (were `sendImageTool` / `taskBrowserTool` / `taskGithubTool`) | Mastra sends the object **keys** as tool names. The system prompt tells the model to call `task_browser` and `send_image`, which didn't exist under those names. Gemini coped; a smaller model may not. |
 
@@ -51,10 +101,8 @@ On 2026-11-03, 13 of OpenRouter's 14 `:free` models listed `tools` support
 - served by Google AI Studio, at 100% uptime over the last 30 min at the time
   of checking (`GET /api/v1/models/google/gemma-4-31b-it:free/endpoints`).
 
-If it can't drive the screenshot flow, try these next. Each needs a
-`PROVIDERS` entry plus a `DEFAULT_MODEL` change:
-- `nvidia/nemotron-3-ultra-550b-a55b:free`
-- `google/gemma-4-26b-a4b-it:free`
+If Gemma can't drive the screenshot flow, reorder `FREE_MODEL_CHAIN` so a
+stronger tool-caller comes first, e.g. `nvidia/nemotron-3-ultra-550b-a55b:free`.
 
 ### Free-tier limits
 
@@ -133,6 +181,8 @@ In the HF logs, expect:
 - `[subagent:browser] step … call browser_navigate`;
 - `… call browser_take_screenshot` with a `/home/node/.playwright-mcp/…png`
   filename;
+- `[runTurn] gemma-4-31b-it:free served by <model>`, which shows whether a
+  fallback answered;
 - no `runTurn failed`.
 
 ## Switching back to a paid model
@@ -146,11 +196,14 @@ $0.02 instead of about $0.16.
 
 ## Verification (2026-11-03)
 
-- **Unit tests:** `cd agent-runtime && npx vitest run` → 34/34.
+- **Unit tests:** `cd agent-runtime && npx vitest run` → 35/35.
   - New `src/agent/runTurn.test.ts` stubs `fetch` and runs `runTurn('Hi')`.
     It asserts model `google/gemma-4-31b-it:free`, `max_tokens: 8192`, a
     leading system message, and tools `send_image` / `task_browser` /
     `task_github`.
+  - A second test asserts the fallback chain: `models[0] === model`, more
+    than one entry, and every entry `:free`. It also checks that the log
+    names the model that actually served, here a mocked Nvidia fallback.
   - `index.test.ts` covers the new `PROVIDERS` entry.
 - **Static checks:** `tsc --noEmit` (including `scripts/smoke-turn.ts`),
   eslint and prettier are clean.

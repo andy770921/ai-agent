@@ -37,7 +37,7 @@ output at 8192 tokens. See `../development/free-tier.md`.
 | Model keys in `PROVIDERS` | **Unchanged** (`gemini-2.5-flash`, `gemini-2.5-pro`), mapped to OpenRouter slugs `google/gemini-2.5-flash` / `google/gemini-2.5-pro`. | `DEFAULT_MODEL` in `src/config/agentConfig.ts`, `pickProvider`, and the Langfuse `model` name all stay as they are. |
 | `HTTP-Referer` / `X-Title` headers | **Hardcoded**: the HF Space URL and `LINE AI Agent`. | Optional OpenRouter app attribution. Not secrets; follows FEAT-5's "config is hardcoded constants" convention. |
 | Claude / GPT-4o entries | **Unchanged** (still direct `@ai-sdk/anthropic` / `@ai-sdk/openai` with their own keys). | Out of scope; see follow-ups. |
-| Default model (2026-11-03) | **`gemma-4-31b-it:free`** → `google/gemma-4-31b-it:free`. | The bot has to work without buying credits. Free models cost $0 and are exempt from OpenRouter's up-front cost check. It is a Google model with tool support. Switch back to `gemini-2.5-flash` once credits are bought. |
+| Default model (2026-11-03) | **`gemma-4-31b-it:free`** → `google/gemma-4-31b-it:free`. | The bot has to work without buying credits. Free models cost $0 and are exempt from OpenRouter's up-front cost check. It is a Google model with tool support. Switch back to `gemini-2.5-flash` once credits are bought. A free-only OpenRouter fallback chain (`FREE_MODEL_CHAIN`) was added after the shared upstream pool returned 429. |
 | Output-token cap (2026-11-03) | **`MAX_OUTPUT_TOKENS = 8192`**, passed as `maxTokens` to all four `generate()` calls. | Without `max_tokens`, OpenRouter budgets a paid request at the model's full output limit (65535 for Gemini 2.5 Flash) and returns 402 if the balance can't cover it, even for "Hi". |
 
 ## Scope

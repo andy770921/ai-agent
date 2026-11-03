@@ -79,8 +79,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   const toolCallCount =
     result.steps?.flatMap((s: Record<string, unknown>) => (s.toolCalls as unknown[]) ?? [])
       .length ?? 0;
+  // With OpenRouter fallbacks (FREE_MODEL_CHAIN) the serving model can differ from providerKey.
+  const servedBy = result.response?.modelId ?? providerKey;
+  console.log(`[runTurn] ${providerKey} served by ${servedBy}, ${toolCallCount} tool call(s)`);
 
-  generation?.end({ output: result.text, metadata: { toolCallCount } });
+  generation?.end({ output: result.text, metadata: { toolCallCount, servedBy } });
   trace?.update({ output: result.text });
 
   return {

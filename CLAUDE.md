@@ -126,7 +126,9 @@ Each workspace has its own `.env.example`:
   (LINE creds, LLM provider keys, Langfuse, CF integration). No Supabase since
   FEAT-5. Since FEAT-6 the LLM calls go through OpenRouter
   (`OPEN_ROUTER_API_KEY`; `GEMINI_API_KEY` is gone). The default model is the
-  free `google/gemma-4-31b-it:free` and every `generate()` passes
+  free `google/gemma-4-31b-it:free` with OpenRouter fallbacks to other `:free`
+  models (`FREE_MODEL_CHAIN` in `src/agent/index.ts` — keep every entry free),
+  and every `generate()` passes
   `maxTokens: MAX_OUTPUT_TOKENS` (8192) — see
   `documents/FEAT-6/development/free-tier.md`. Production values set via
   HF Space Settings → Repository secrets.
