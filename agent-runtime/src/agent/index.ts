@@ -29,6 +29,8 @@ export const PROVIDERS: Record<string, LanguageModel> = {
   // No cast: @openrouter/ai-sdk-provider@0.7 is the AI SDK 4 line (LanguageModelV1).
   'gemini-2.5-flash': openrouter('google/gemini-2.5-flash'),
   'gemini-2.5-pro': openrouter('google/gemini-2.5-pro'),
+  // $0 per token; OpenRouter allows 20 req/min and 50 req/day until $10 of credits are bought.
+  'gemma-4-31b-it:free': openrouter('google/gemma-4-31b-it:free'),
   'claude-sonnet-4-6': anthropic('claude-sonnet-4-6') as unknown as LanguageModel,
   'claude-haiku-4-5': anthropic('claude-haiku-4-5-20251001') as unknown as LanguageModel,
   'gpt-4o': openai('gpt-4o') as unknown as LanguageModel,

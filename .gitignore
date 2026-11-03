@@ -35,6 +35,9 @@ Thumbs.db
 
 # Testing
 coverage/
+# Playwright MCP output (screenshots, page snapshots) from local runs, e.g.
+# `npm run smoke --workspace=@repo/agent-runtime`.
+.playwright-mcp/
 
 # Logs
 *.log

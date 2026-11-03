@@ -3,6 +3,7 @@ import { pickProvider } from '../agent/providerRouting.js';
 import type { MastraMCPClient } from '@mastra/mcp';
 import { agentEventBus } from '../observability/bus.js';
 import { softTruncate } from './summarise.js';
+import { MAX_OUTPUT_TOKENS } from '../config/agentConfig.js';
 
 interface Args {
   userId: string;
@@ -59,6 +60,7 @@ export async function runSubagent(a: Args): Promise<string> {
       });
       const result = await subagent.generate([{ role: 'user', content: a.prompt }], {
         maxSteps: 12,
+        maxTokens: MAX_OUTPUT_TOKENS,
       });
       logSubagentSteps(a.taskName, result);
       agentEventBus.emit({

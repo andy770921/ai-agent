@@ -9,6 +9,7 @@
     "lint": "eslint src --ext .ts",
     "test": "vitest run",
     "test:acceptance": "tsx tests/acceptance/runner.ts",
+    "smoke": "tsx --env-file=.env scripts/smoke-turn.ts",
     "postinstall": "node scripts/install-mcp-deps.cjs"
   },
   "dependencies": {

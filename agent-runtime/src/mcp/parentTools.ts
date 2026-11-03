@@ -1,7 +1,17 @@
+import { join } from 'node:path';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { runSubagent } from './subagentRunner.js';
 import { playwrightMcp, githubMcp } from './mcpClients.js';
+
+// Playwright MCP only allows writes under its cwd and <cwd>/.playwright-mcp. In the
+// container the cwd is WORKDIR /home/node, so this is /home/node/.playwright-mcp;
+// locally (scripts/smoke-turn.ts) it's agent-runtime/.playwright-mcp.
+const MCP_ROOT = process.cwd();
+const SCREENSHOT_DIR = join(MCP_ROOT, '.playwright-mcp');
+
+// Overridable so scripts/smoke-turn.ts can stub delivery outside the container.
+const deliverBin = process.env.DELIVER_LINE_IMAGE_BIN ?? '/usr/local/bin/deliver-line-image.sh';
 
 export const taskBrowserTool = createTool({
   id: 'task_browser',
@@ -27,8 +37,8 @@ export const taskBrowserTool = createTool({
       prompt: context.task,
       systemHint:
         'You are a headless-browser specialist. Use Playwright MCP tools to fulfil the task. ' +
-        'When saving screenshots or other files, write to /home/node/.playwright-mcp/<name>.png. ' +
-        'Playwright MCP only allows writes under /home/node and /home/node/.playwright-mcp — ' +
+        `When saving screenshots or other files, write to ${SCREENSHOT_DIR}/<name>.png. ` +
+        `Playwright MCP only allows writes under ${MCP_ROOT} and ${SCREENSHOT_DIR} — ` +
         '/tmp and other paths will be rejected with "File access denied".',
     });
   },
@@ -63,7 +73,7 @@ export const sendImageTool = createTool({
     const userId = String(runtimeContext?.get('userId') ?? '');
     const { execFile } = await import('node:child_process');
     const out = await new Promise<string>((resolve, reject) =>
-      execFile('/usr/local/bin/deliver-line-image.sh', [userId, context.pngPath], (err, stdout) =>
+      execFile(deliverBin, [userId, context.pngPath], (err, stdout) =>
         err ? reject(err) : resolve(stdout),
       ),
     );

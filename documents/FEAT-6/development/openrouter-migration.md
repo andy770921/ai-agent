@@ -3,6 +3,9 @@
 This doc records exactly what changed to route the Gemini models through
 OpenRouter. See `../plans/prd.md` for the motivation and decisions.
 
+> **Follow-up:** the default model was later switched to a free model, with an
+> 8192-token output cap, after a 402 in production. See `free-tier.md`.
+
 ## Files changed
 
 | File | Change |
@@ -94,8 +97,15 @@ From the repo root, with `OPEN_ROUTER_API_KEY` set in `agent-runtime/.env`:
     -d '{"model":"google/gemini-2.5-flash","messages":[{"role":"user","content":"Reply with exactly: pong"}]}' )
 ```
 
-Expect HTTP 200 with `choices[0].message.content` ≈ `"pong"`. A `401` means a
-bad or revoked key; `402` means the credit limit is used up.
+Expect HTTP 200 with `choices[0].message.content` ≈ `"pong"`.
+
+- **401** means a bad or revoked key.
+- **402** means OpenRouter wouldn't cover the request's estimated cost. That
+  can be a low account balance (*"You requested up to N tokens, but can only
+  afford M"*), the key's spending limit, or an expired key.
+
+To exercise the whole agent, not just one request, use
+`npm run smoke --workspace=@repo/agent-runtime`; see `free-tier.md`.
 
 ## Deployment
 

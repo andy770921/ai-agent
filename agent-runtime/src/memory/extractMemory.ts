@@ -10,6 +10,7 @@ import {
 import { recordCuratorRun } from '../store/curatorRunStore.js';
 import { gateMemoryExtraction } from './gateCheck.js';
 import { withAdvisoryLock } from '../store/locks.js';
+import { MAX_OUTPUT_TOKENS } from '../config/agentConfig.js';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
@@ -126,7 +127,10 @@ export async function extractMemory(userId: string, sessionId: string) {
       },
     });
 
-    await subagent.generate([{ role: 'user', content: 'Extract memories now.' }], { maxSteps: 5 });
+    await subagent.generate([{ role: 'user', content: 'Extract memories now.' }], {
+      maxSteps: 5,
+      maxTokens: MAX_OUTPUT_TOKENS,
+    });
 
     recordCuratorRun({ userId, phase: 'extract-success' });
     return { skipped: false };

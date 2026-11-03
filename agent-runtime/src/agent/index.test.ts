@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DEFAULT_MODEL } from '../config/agentConfig.js';
+import { DEFAULT_MODEL, MAX_OUTPUT_TOKENS } from '../config/agentConfig.js';
 
 // PROVIDERS reads OPEN_ROUTER_API_KEY at module load, so each test stubs the
 // env first and imports a fresh copy.
@@ -23,11 +23,16 @@ describe('PROVIDERS', () => {
     expect(providers).toHaveProperty(DEFAULT_MODEL);
   });
 
-  it('routes Gemini through OpenRouter as an AI SDK 4 (v1) model', async () => {
+  it('caps output tokens well below the paid model limit (65535) that OpenRouter budgets for', () => {
+    expect(MAX_OUTPUT_TOKENS).toBe(8192);
+  });
+
+  it('routes Google models through OpenRouter as AI SDK 4 (v1) models', async () => {
     const providers = await loadProviders();
     for (const [key, slug] of [
       ['gemini-2.5-flash', 'google/gemini-2.5-flash'],
       ['gemini-2.5-pro', 'google/gemini-2.5-pro'],
+      ['gemma-4-31b-it:free', 'google/gemma-4-31b-it:free'],
     ]) {
       const model = providers[key];
       expect(model.provider).toBe('openrouter.chat');

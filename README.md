@@ -68,7 +68,7 @@ and where it has to be set.
 | --------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `LINE_CHANNEL_SECRET`       | LINE Developers Console → your channel → **Basic settings**                                          | HF Space secret **and** the `edge/` Worker (as a secret)        |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Console → **Messaging API** tab → bottom → **Channel access token** → Issue                     | HF Space secret only                                            |
-| `OPEN_ROUTER_API_KEY`       | https://openrouter.ai/settings/keys — default Gemini models are routed through OpenRouter (FEAT-6)   | HF Space secret                                                 |
+| `OPEN_ROUTER_API_KEY`       | https://openrouter.ai/settings/keys — all LLM calls; default model is free (FEAT-6)                  | HF Space secret                                                 |
 | `ANTHROPIC_API_KEY`         | https://console.anthropic.com/settings/keys (optional — only if using Claude)                        | HF Space secret                                                 |
 | `OPENAI_API_KEY`            | https://platform.openai.com/api-keys (optional — only if using GPT-4o)                               | HF Space secret                                                 |
 | `GITHUB_TOKEN`              | https://github.com/settings/tokens?type=beta — fine-grained PAT with **read** on all repos           | HF Space secret                                                 |

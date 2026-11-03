@@ -48,8 +48,20 @@ You have three tools:
 - You CANNOT install software or execute arbitrary shell commands.
 - When in doubt, ask the user a clarifying question rather than guessing.`;
 
-/** Default LLM provider key (must exist in agent/index.ts PROVIDERS). */
-export const DEFAULT_MODEL = 'gemini-2.5-flash';
+/**
+ * Default LLM provider key (must exist in agent/index.ts PROVIDERS).
+ * A free OpenRouter model, so the bot runs without buying credits (FEAT-6).
+ * Switch back to 'gemini-2.5-flash' once the OpenRouter account has credits.
+ */
+export const DEFAULT_MODEL = 'gemma-4-31b-it:free';
+
+/**
+ * Output-token cap passed as `maxTokens` to every `generate()` call. Without it,
+ * OpenRouter budgets a paid request at the model's full output limit (65535 for
+ * gemini-2.5-flash) and answers 402 when the balance can't cover that, even for
+ * a one-word reply. LINE replies are short; this leaves room for reasoning.
+ */
+export const MAX_OUTPUT_TOKENS = 8192;
 
 /**
  * Long-term memory extraction toggle. Was `agent_config.memory_extraction_enabled`.

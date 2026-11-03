@@ -8,6 +8,7 @@ import { findRelevantSkills } from '../store/skillStore.js';
 import { composeSystem } from './composeSystem.js';
 import { taskBrowserTool, taskGithubTool, sendImageTool } from '../mcp/parentTools.js';
 import { getLangfuse } from '../observability/langfuse.js';
+import { MAX_OUTPUT_TOKENS } from '../config/agentConfig.js';
 
 export interface TurnInput {
   userId: string;
@@ -39,7 +40,13 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       skills.map((s) => s.body),
     ),
     model: PROVIDERS[providerKey],
-    tools: { sendImageTool, taskBrowserTool, taskGithubTool },
+    // Keys are the tool names the model sees; keep them equal to the tool ids the
+    // system prompt refers to (task_browser / task_github / send_image).
+    tools: {
+      send_image: sendImageTool,
+      task_browser: taskBrowserTool,
+      task_github: taskGithubTool,
+    },
   });
 
   const messages = [...history.map(toAiMessage), { role: 'user' as const, content: userMessage }];
@@ -63,7 +70,11 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
   runtimeContext.set('userId', userId);
   runtimeContext.set('sessionId', sessionId);
 
-  const result = await agent.generate(messages, { maxSteps: 8, runtimeContext });
+  const result = await agent.generate(messages, {
+    maxSteps: 8,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    runtimeContext,
+  });
 
   const toolCallCount =
     result.steps?.flatMap((s: Record<string, unknown>) => (s.toolCalls as unknown[]) ?? [])

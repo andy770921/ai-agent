@@ -4,6 +4,7 @@ import { loadRecentMessages, type StoredMessage } from '../store/messageStore.js
 import { listSkillsForUser, upsertSkill } from '../store/skillStore.js';
 import { withAdvisoryLock } from '../store/locks.js';
 import { getAndResetMetrics } from './sessionMetrics.js';
+import { MAX_OUTPUT_TOKENS } from '../config/agentConfig.js';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
@@ -61,7 +62,7 @@ export async function maybeCreateSkill(userId: string, sessionId: string) {
           content: 'Decide if a skill is worth creating now.',
         },
       ],
-      { maxSteps: 3 },
+      { maxSteps: 3, maxTokens: MAX_OUTPUT_TOKENS },
     );
     return { skipped: false };
   });

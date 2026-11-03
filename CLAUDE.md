@@ -48,6 +48,13 @@ cd frontend && npx jest src/path/to/file.spec.ts
 cd agent-runtime && npx vitest run
 ```
 
+**Agent-runtime smoke test** (real `runTurn()` calls for "Hi" + a Google
+screenshot against `DEFAULT_MODEL` on OpenRouter and the real Playwright MCP;
+needs `OPEN_ROUTER_API_KEY` in `agent-runtime/.env`; image delivery is stubbed):
+```bash
+cd agent-runtime && npm run smoke
+```
+
 **Build the dashboard for Cloudflare Pages:**
 ```bash
 npm run build:pages --workspace=frontend
@@ -117,8 +124,11 @@ Each workspace has its own `.env.example`:
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
 - `agent-runtime/.env.example` — all container env vars with placeholders
   (LINE creds, LLM provider keys, Langfuse, CF integration). No Supabase since
-  FEAT-5. Since FEAT-6 the default Gemini models go through OpenRouter
-  (`OPEN_ROUTER_API_KEY`; `GEMINI_API_KEY` is gone). Production values set via
+  FEAT-5. Since FEAT-6 the LLM calls go through OpenRouter
+  (`OPEN_ROUTER_API_KEY`; `GEMINI_API_KEY` is gone). The default model is the
+  free `google/gemma-4-31b-it:free` and every `generate()` passes
+  `maxTokens: MAX_OUTPUT_TOKENS` (8192) — see
+  `documents/FEAT-6/development/free-tier.md`. Production values set via
   HF Space Settings → Repository secrets.
 
 The complete env-var table is in `agent-runtime/.env.example`.
