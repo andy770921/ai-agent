@@ -68,7 +68,7 @@ and where it has to be set.
 | --------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `LINE_CHANNEL_SECRET`       | LINE Developers Console → your channel → **Basic settings**                                          | HF Space secret **and** the `edge/` Worker (as a secret)        |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Console → **Messaging API** tab → bottom → **Channel access token** → Issue                     | HF Space secret only                                            |
-| `GEMINI_API_KEY`            | https://aistudio.google.com/apikey                                                                   | HF Space secret                                                 |
+| `OPEN_ROUTER_API_KEY`       | https://openrouter.ai/settings/keys — default Gemini models are routed through OpenRouter (FEAT-6)   | HF Space secret                                                 |
 | `ANTHROPIC_API_KEY`         | https://console.anthropic.com/settings/keys (optional — only if using Claude)                        | HF Space secret                                                 |
 | `OPENAI_API_KEY`            | https://platform.openai.com/api-keys (optional — only if using GPT-4o)                               | HF Space secret                                                 |
 | `GITHUB_TOKEN`              | https://github.com/settings/tokens?type=beta — fine-grained PAT with **read** on all repos           | HF Space secret                                                 |
@@ -168,6 +168,7 @@ Slash commands live under `.claude/commands/`. Use the ticket ID in place of
 
 - `CLAUDE.md` — guidance for Claude Code working in this repo.
 - `documents/FEAT-4/` — Mastra rewrite PRD + implementation plans (current architecture).
+- `documents/FEAT-6/` — LLM access via OpenRouter (`OPEN_ROUTER_API_KEY` replaces `GEMINI_API_KEY`).
 - `documents/FEAT-1/` — original LINE agent build (historical — OpenAB + Gemini CLI).
 - `documents/FEAT-2/` — HF Spaces migration.
 - `documents/FIX-2/` — Gemini tool routing fix (superseded by FEAT-4).

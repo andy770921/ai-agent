@@ -117,7 +117,9 @@ Each workspace has its own `.env.example`:
   `DASHBOARD_TOKEN`). Production values via `wrangler secret put`.
 - `agent-runtime/.env.example` — all container env vars with placeholders
   (LINE creds, LLM provider keys, Langfuse, CF integration). No Supabase since
-  FEAT-5. Production values set via HF Space Settings → Repository secrets.
+  FEAT-5. Since FEAT-6 the default Gemini models go through OpenRouter
+  (`OPEN_ROUTER_API_KEY`; `GEMINI_API_KEY` is gone). Production values set via
+  HF Space Settings → Repository secrets.
 
 The complete env-var table is in `agent-runtime/.env.example`.
 
@@ -139,6 +141,7 @@ documents/FEAT-2/      # HF Spaces migration
 documents/FEAT-3/      # MCP env / Langfuse follow-ups
 documents/FEAT-4/      # Mastra rewrite — removed OpenAB, single TS process
 documents/FEAT-5/      # removed Supabase — in-process stores + hardcoded config
+documents/FEAT-6/      # LLM access via OpenRouter (replaces GEMINI_API_KEY)
 documents/FIX-1/       # one-off fixes
 documents/FIX-2/       # Gemini tool routing fix (superseded by FEAT-4)
 documents/REFACTOR-1/  # deep-modules refactor (Worker + sidecar + frontend SSE)

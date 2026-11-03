@@ -13,11 +13,11 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "1",
-    "@ai-sdk/google": "1",
     "@ai-sdk/openai": "1",
     "@hono/node-server": "^1",
     "@mastra/core": "^0.10",
     "@mastra/mcp": "^0.3",
+    "@openrouter/ai-sdk-provider": "^0.7.5",
     "hono": "^4",
     "langfuse": "^3",
     "zod": "^3"
